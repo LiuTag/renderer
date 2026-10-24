@@ -1,0 +1,14 @@
+@PACKAGE_INIT@
+
+include(CMakeFindDependencyMacro)
+find_dependency(Threads)
+include("${CMAKE_CURRENT_LIST_DIR}/rendererTargets.cmake")
+set(renderer_EXAMPLE_TEST_HELPER "@PACKAGE_CMAKE_INSTALL_DATADIR@/renderer/tests/example_tests.cmake")
+
+set(renderer_core_FOUND TRUE)
+set(renderer_opengl_FOUND @RENDERER_BUILD_OPENGL@)
+set(renderer_vulkan_FOUND @RENDERER_BUILD_VULKAN@)
+set(renderer_animation_FOUND @RENDERER_BUILD_ANIMATION@)
+set(renderer_interaction_FOUND @RENDERER_BUILD_INTERACTION@)
+set(renderer_audio_FOUND @RENDERER_BUILD_AUDIO@)
+check_required_components(renderer)

@@ -1,0 +1,84 @@
+{
+  "version": 6,
+  "configurePresets": [
+    {
+      "name": "windows",
+      "displayName": "Windows / Visual Studio 2022 / x64",
+      "generator": "Visual Studio 17 2022",
+      "architecture": "x64",
+      "binaryDir": "${sourceDir}/build/windows"
+    },
+    {
+      "name": "windows-gpu-tests",
+      "inherits": "windows",
+      "binaryDir": "${sourceDir}/build/windows-gpu-tests",
+      "cacheVariables": {
+        "RENDERER_BUILD_EXAMPLES": "ON",
+        "RENDERER_BUILD_TESTS": "ON",
+        "RENDERER_GL_TESTS": "ON"
+      }
+    },
+    {
+      "name": "windows-vulkan",
+      "inherits": "windows",
+      "displayName": "Windows / Vulkan 1.3 / Debug GPU checks",
+      "binaryDir": "${sourceDir}/build/windows-vulkan",
+      "cacheVariables": {
+        "RENDERER_BUILD_OPENGL": "OFF",
+        "RENDERER_BUILD_VULKAN": "ON",
+        "RENDERER_BUILD_EXAMPLES": "ON",
+        "RENDERER_BUILD_TESTS": "ON",
+        "RENDERER_GL_TESTS": "OFF",
+        "RENDERER_VULKAN_TESTS": "ON"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "windows",
+      "configurePreset": "windows",
+      "configuration": "Debug"
+    },
+    {
+      "name": "windows-release",
+      "configurePreset": "windows",
+      "configuration": "Release"
+    },
+    {
+      "name": "windows-gpu-tests",
+      "configurePreset": "windows-gpu-tests",
+      "configuration": "Debug"
+    },
+    {
+      "name": "windows-vulkan",
+      "configurePreset": "windows-vulkan",
+      "configuration": "Debug"
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "windows",
+      "configurePreset": "windows",
+      "configuration": "Debug",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "windows-gpu-tests",
+      "configurePreset": "windows-gpu-tests",
+      "configuration": "Debug",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "windows-vulkan",
+      "configurePreset": "windows-vulkan",
+      "configuration": "Debug",
+      "output": {
+        "outputOnFailure": true
+      }
+    }
+  ]
+}

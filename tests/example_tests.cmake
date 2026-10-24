@@ -1,0 +1,53 @@
+# 源码工程与已安装 SDK 共用的示例运行检查；测试入口统一保存在 tests/。
+include_guard(GLOBAL)
+
+function(renderer_add_example_check name target)
+    if(NOT TARGET ${target})
+        return()
+    endif()
+    get_target_property(needs_gl ${target} RENDERER_EXAMPLE_REQUIRES_OPENGL)
+    get_target_property(needs_vk ${target} RENDERER_EXAMPLE_REQUIRES_VULKAN)
+    if(needs_vk AND NOT RENDERER_VULKAN_TESTS)
+        return()
+    endif()
+    if(needs_gl AND NOT RENDERER_GL_TESTS)
+        return()
+    endif()
+    add_test(NAME ${name} COMMAND ${target} ${ARGN})
+    if(needs_vk)
+        set_tests_properties(${name} PROPERTIES TIMEOUT 120 LABELS "gpu;vulkan;example")
+    elseif(needs_gl)
+        set_tests_properties(${name} PROPERTIES TIMEOUT 60 LABELS "gpu;example")
+    else()
+        set_tests_properties(${name} PROPERTIES TIMEOUT 60 LABELS "cpu;example")
+    endif()
+endfunction()
+
+function(renderer_register_example_tests)
+    if(NOT RENDERER_BUILD_TESTS)
+        return()
+    endif()
+    renderer_add_example_check(development.scene development_scene --hidden --frames 4)
+    renderer_add_example_check(development.compute development_compute)
+    renderer_add_example_check(development.graph development_graph)
+    renderer_add_example_check(development.sprite development_sprite --hidden --frames 24 --threaded --oit --self-test)
+    renderer_add_example_check(renderer.sdk.consumer renderer_sdk_consumer)
+    renderer_add_example_check(renderer.sdk.modules renderer_modules_consumer)
+    renderer_add_example_check(renderer.audio.example renderer_audio_demo --offline)
+    renderer_add_example_check(renderer.vulkan.example renderer_vulkan_demo --hidden --frames 4 --threaded --oit --fxaa)
+    renderer_add_example_check(renderer.vulkan.forest renderer_vulkan_sprite_demo --hidden --frames 24 --threaded --oit --self-test)
+    # 性能数值受机器负载影响；这里只验证矩阵运行、真实数量/图像和 CSV 输出，不设置 FPS 门槛。
+    if(TARGET renderer_sprite_benchmark)
+        foreach(backend IN ITEMS opengl vulkan)
+            if((backend STREQUAL "opengl" AND RENDERER_GL_TESTS AND TARGET renderer::opengl) OR
+               (backend STREQUAL "vulkan" AND RENDERER_VULKAN_TESTS AND TARGET renderer::vulkan))
+                add_test(NAME renderer.benchmark.${backend} COMMAND renderer_sprite_benchmark
+                    --backend ${backend} --threads all --counts 128,512 --atlas-images 25,100 --warmup 6 --frames 12
+                    --width 640 --height 400 --hidden --validation --self-test
+                    --csv "${CMAKE_BINARY_DIR}/sprite-benchmark-${backend}-smoke.csv")
+                set_tests_properties(renderer.benchmark.${backend} PROPERTIES
+                    TIMEOUT 120 RUN_SERIAL TRUE LABELS "gpu;example;benchmark;${backend}")
+            endif()
+        endforeach()
+    endif()
+endfunction()

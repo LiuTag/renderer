@@ -1,0 +1,117 @@
+{
+  "asset": {
+    "version": "2.0"
+  },
+  "buffers": [
+    {
+      "uri": "triangle.bin",
+      "byteLength": 42
+    }
+  ],
+  "bufferViews": [
+    {
+      "buffer": 0,
+      "byteOffset": 0,
+      "byteLength": 36
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 36,
+      "byteLength": 6
+    }
+  ],
+  "accessors": [
+    {
+      "bufferView": 0,
+      "componentType": 5126,
+      "count": 3,
+      "type": "VEC3",
+      "min": [
+        -0.8,
+        -0.8,
+        0
+      ],
+      "max": [
+        0.8,
+        0.8,
+        0
+      ]
+    },
+    {
+      "bufferView": 1,
+      "componentType": 5123,
+      "count": 3,
+      "type": "SCALAR"
+    }
+  ],
+  "meshes": [
+    {
+      "primitives": [
+        {
+          "attributes": {
+            "POSITION": 0
+          },
+          "indices": 1,
+          "material": 0
+        }
+      ]
+    }
+  ],
+  "materials": [
+    {
+      "pbrMetallicRoughness": {
+        "baseColorFactor": [
+          0.1,
+          0.6,
+          0.8,
+          1
+        ],
+        "metallicFactor": 0.2,
+        "roughnessFactor": 0.4
+      },
+      "extensions": {
+        "KHR_materials_unlit": {}
+      }
+    }
+  ],
+  "cameras": [
+    {
+      "type": "perspective",
+      "perspective": {
+        "yfov": 1.04719755,
+        "znear": 0.1,
+        "zfar": 100
+      }
+    }
+  ],
+  "nodes": [
+    {
+      "name": "Group",
+      "children": [
+        1,
+        2
+      ]
+    },
+    {
+      "name": "Mesh",
+      "mesh": 0
+    },
+    {
+      "name": "Camera",
+      "camera": 0,
+      "translation": [
+        0,
+        0,
+        3
+      ]
+    }
+  ],
+  "scenes": [
+    {
+      "nodes": [
+        0
+      ]
+    }
+  ],
+  "scene": 0
+}

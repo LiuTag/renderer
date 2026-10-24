@@ -1,0 +1,44 @@
+# 构建目录、依赖下载缓存和已安装的 SDK。
+/build/
+/build-*/
+/cmake-build-*/
+/.cache/
+/out/
+
+# 本机 IDE 配置和数据库。
+.vs/
+CMakeUserPresets.json
+*.user
+*.suo
+*.VC.db
+*.VC.opendb
+
+# 误在源码根目录执行 CMake 时产生的文件。
+/CMakeFiles/
+/CMakeCache.txt
+/cmake_install.cmake
+/install_manifest*.txt
+/CTestTestfile.cmake
+/DartConfiguration.tcl
+/Testing/
+/compile_commands.json
+/Makefile
+/*.sln
+/*.slnx
+/*.vcxproj
+/*.vcxproj.filters
+
+# 根目录中的默认性能输出和截图；测试素材仍需跟踪。
+/sprite-benchmark.csv
+/*.ppm
+
+# 编辑器临时文件和系统缩略图。
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# OBJ 是本项目的模型测试素材，不能按编译中间文件忽略。
+!/tests/assets/
+!/tests/assets/**

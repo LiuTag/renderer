@@ -1,0 +1,14 @@
+# 自有文本使用 LF，覆盖本机 core.autocrlf，减少跨平台行尾差异。
+* text=auto eol=lf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# 模型缓冲、GLB 和图片以二进制保存。
+*.bin binary
+*.glb binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+
+# 第三方原文按字节保存，确保文档记录的上游哈希和许可证内容不变。
+/third_party/** -text -whitespace
