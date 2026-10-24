@@ -49,6 +49,31 @@ size_t SpriteAtlas::size() const {
     return impl_ ? impl_->entries.size() : 0;
 }
 namespace detail {
+void validateSprite(const SpriteRenderer &c) {
+    if (!c.sprite || !finite(c.sortOffset) ||
+        (c.billboard != BillboardMode::Fixed && c.billboard != BillboardMode::Upright &&
+         c.billboard != BillboardMode::ViewPlane) ||
+        (c.transparency != SpriteTransparency::Sorted &&
+         c.transparency != SpriteTransparency::FollowView) ||
+        !std::isfinite(c.rotation) || !std::isfinite(c.sizeMultiplier.x) ||
+        !std::isfinite(c.sizeMultiplier.y) || c.sizeMultiplier.x <= 0 || c.sizeMultiplier.y <= 0)
+        throw std::invalid_argument("Invalid SpriteRenderer geometry or mode");
+    for (float v : {c.tint.x, c.tint.y, c.tint.z, c.tint.w})
+        if (!std::isfinite(v) || v < 0)
+            throw std::invalid_argument("Sprite tint must be finite and nonnegative");
+    if (c.tint.w > 1)
+        throw std::invalid_argument("Sprite alpha must be in [0,1]");
+
+    for (const auto color : {c.colorOverlay, c.outlineColor}) {
+        for (float v : {color.x, color.y, color.z, color.w})
+            if (!std::isfinite(v) || v < 0)
+                throw std::invalid_argument("Invalid sprite effect color");
+        if (color.w > 1)
+            throw std::invalid_argument("Invalid sprite effect weight");
+    }
+    if (!std::isfinite(c.outlineWidth) || c.outlineWidth < 0 || c.outlineWidth > 16)
+        throw std::invalid_argument("Outline width must be in [0,16]");
+}
 Mat4 cameraProjection(const Camera &camera, uint32_t width, uint32_t height) {
     if (!width || !height)
         throw std::invalid_argument("Viewport dimensions must be positive");

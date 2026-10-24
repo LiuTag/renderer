@@ -4,9 +4,15 @@ C++20 实时三维渲染引擎，支持 OpenGL 4.5 Core 与可选 Vulkan 1.3 后
 
 中文文档：[文档导航](docs/README.md) · [快速开始](docs/GETTING_STARTED.md) · [接口说明](docs/API_GUIDE.md) · [架构与扩展](docs/ARCHITECTURE.md) · [验证与排错](docs/VALIDATION.md)。
 
+当前源码与 SDK 包版本为 0.2.0。近期新增能力和工程整理见[版本变更记录](CHANGELOG.md)，完整能力及边界见[实现清单](IMPLEMENTATION.md)。
+
+[离屏渲染与 PNG](docs/OFFSCREEN.md)：无需应用窗口即可取得渲染图片。`Renderer::createVulkanOffscreen()` 完全跳过窗口/表面/交换链；Windows OpenGL 使用 WGL pbuffer。统一通过 `renderToImage(snapshot, view).savePng(path)` 保存，示例为 `renderer_offscreen_demo`。
+
 二次开发请从[完整开发手册](docs/DEVELOPMENT_GUIDE.md)开始：包含 SDK 接入、场景/材质/模型、相机与输入、透明和线程、Shader/RHI/RenderGraph、性能排错与源码扩展，并附四个可以通过已安装 SDK 独立构建的示例。
 
 制作图片角色与三维地面结合的游戏，参见 [Sprite / Billboard 开发说明](docs/SPRITES.md)：支持图集、脚底锚点、方向序列帧、排序组及透明区域拾取。运行 `renderer_sprite_demo --threaded` 体验可移动、可选择物体的森林示例。
+
+[图片世界模块](docs/WORLD_MODULES.md)支持分块瓦片、后台流式加载、连续圆形碰撞、图片粒子、昼夜天气、遮挡淡出、闪白、内描边和接触阴影。[Box2D 二维物理](docs/PHYSICS2D.md)作为独立 physics2d 模块提供刚体、复合形状、触发/接触事件、受力、查询、距离关节和场景同步。运行 `renderer_world_demo --backend opengl` 或 `--backend vulkan` 体验集成场景；地图和粒子通过 `SpriteBatch` 发布。
 
 [精灵性能测试](docs/SPRITE_BENCHMARK.md)使用相同森林图集，扫描精灵数量和图集图片种类数，并对比 OpenGL/Vulkan 和单线程/独立渲染线程，支持预热、帧分位数、GPU Pass 计时与 CSV。运行 `renderer_sprite_benchmark --backend all --threads all`。
 
@@ -20,7 +26,7 @@ C++20 实时三维渲染引擎，支持 OpenGL 4.5 Core 与可选 Vulkan 1.3 后
 
 源码为 UTF-8；公共接口和关键算法已补充中文注释，重点解释资源生命周期、场景版本、批处理、图编译及线程同步。
 
-模块已拆分为 `renderer::core`、`renderer::opengl`、可选的 `renderer::vulkan`，以及 `renderer::animation`、`renderer::interaction`、`renderer::audio`。应用显式链接所需后端与扩展；构建开关和迁移方式见[模块说明](docs/MODULES.md)。
+模块已拆分为 `renderer::core`、`renderer::opengl`、可选的 `renderer::vulkan`，以及 animation、interaction、audio、tilemap、collision、particles、environment、presentation、physics2d 九个可选模块。应用显式链接所需后端与扩展；构建开关和迁移方式见[模块说明](docs/MODULES.md)。
 
 [音乐与音效](docs/AUDIO.md)使用 miniaudio：音乐流式读取、短音效叠加、分组音量/静音、淡入淡出和基础空间音频。运行 `renderer_audio_demo` 播放演示声，或加 `--offline` 进行无声卡混音检查。
 
@@ -38,11 +44,14 @@ cmake --build --preset windows-release --parallel 6
 | 场景 | 安全节点句柄、父子变换、可见性、层过滤、MeshRenderer、透视/正交 Camera、方向/点/聚光 Light |
 | 资源 | 不可变 Mesh/Texture/Material、submesh、材质槽、可重复实例化 Model、资源独立的渲染快照 |
 | 图片与动画 | Sprite/图集、Fixed/Upright/ViewPlane、裁剪与翻转、落地点/部件排序、1/4/8 方向序列帧及事件、屏幕射线与 Alpha 拾取 |
+| 图片世界 | 不可变精灵批次、分块/流式地图与持久化、圆/AABB 连续移动、固定步图片粒子、昼夜天气、遮挡淡出/闪白/内描边 |
+| 二维物理 | 独立 Box2D 模块，刚体、复合形状、固定步、事件、查询、距离关节与场景同步 |
+| 离屏输出 | Vulkan 无窗口渲染、Windows OpenGL pbuffer、独立尺寸、同步回读与 PNG/PPM 保存 |
 | 音频 | 独立 miniaudio 模块、WAV/MP3/FLAC、音乐流、并发音效、混音分组、包络、优先级、空间定位与离线混音 |
 | RHI | Buffer、Texture/View、Sampler、Graphics/Compute Pipeline、BindingGroup、命令列表、直接/间接绘制、Dispatch、资源拷贝、Barrier、Fence、Timestamp、能力查询 |
 | RenderGraph | 读写依赖、范围和初始化验证、环/反馈检测、无效 Pass 剔除、临时资源物理复用、可缓存的编译图 |
 | 材质 | metallic/roughness PBR、基色/法线/MR/AO/自发光纹理、不透明/Alpha Mask/透明、双面、unlit |
-| 光照与后处理 | 多灯光、方向光阴影与 3×3 PCF、RGBA16F HDR、排序 Alpha / 可选加权 OIT、ACES/Reinhard/直通 ToneMap、可选 FXAA、sRGB 输出 |
+| 光照与后处理 | 多灯光、方向光阴影与 3×3 PCF、RGBA16F HDR、排序 Alpha / 可选加权 OIT、ACES/Reinhard/直通 ToneMap、可选 FXAA、线性调色、屏幕空间接触阴影、sRGB 输出 |
 | 导入 | 静态 glTF 2.0/GLB、OBJ/MTL、PNG/JPEG 等图片；层级、材质、相机、KHR_lights_punctual |
 | 性能与线程 | 视锥裁剪、实例化批处理、Shader/Program/Pipeline 缓存、帧上传缓冲、延迟销毁、有界异步提交、独立渲染线程、GPU 分 Pass 计时 |
 
@@ -50,7 +59,7 @@ cmake --build --preset windows-release --parallel 6
 
 ## 构建
 
-需要 CMake 3.25+、C++20 编译器，以及支持 OpenGL 4.5 Core 的驱动。Windows 预设使用 Visual Studio 2022 C++ 工具链。当前实际验证为 Windows + NVIDIA，Linux 构建路径尚未实机验证。
+需要 CMake 3.25+、C++20 编译器；默认 OpenGL 后端需要 4.5 Core 驱动，Vulkan 后端需要 Vulkan 1.3。启用 Box2D 的源码构建还需要 C17 编译器。Windows 预设使用 Visual Studio 2022 工具链。当前实际验证为 Windows + NVIDIA，其他平台尚未实机验证。
 
 ```powershell
 cmake --preset windows
@@ -66,7 +75,7 @@ cmake --build --preset windows-release
 .\build\windows\Release\renderer_demo.exe --threaded
 ```
 
-首次配置会下载经 SHA256 校验的 GLFW 3.4、glslang 15.4.0 和 SPIRV-Cross vulkan-sdk-1.4.321.0 源码。GLAD/Volk 加载器、TinyGLTF/JSON/stb_image 和 miniaudio 0.11.25 源码已包含在项目中。默认 OpenGL 构建不需要 Vulkan SDK；显式启用 Vulkan 的源码构建需要 Vulkan 开发头文件。两者都不需要 Python 或额外 Shader 编译器可执行文件。
+首次配置会下载经 SHA256 校验的 glslang、SPIRV-Cross，以及启用功能需要的 GLFW 和 Box2D 源码。GLAD/Volk、TinyGLTF/JSON/stb 图片编解码和 miniaudio 源码已包含在项目中。默认 OpenGL 构建不需要 Vulkan SDK；启用 Vulkan 的源码构建需要开发头文件。固定版本、管理方式和离线覆盖见[第三方依赖](THIRD_PARTY.md)。正常构建不需要 Python 或额外 Shader 编译器可执行文件。
 
 同时启用 Vulkan：
 
@@ -85,7 +94,7 @@ cmake --preset windows -DFETCHCONTENT_SOURCE_DIR_GLFW=C:/deps/glfw-3.4 -DFETCHCO
 仅构建 CPU 核心、Shader 工具链、导入器和 CPU 测试：
 
 ```powershell
-cmake -S . -B build/core -DRENDERER_BUILD_OPENGL=OFF -DRENDERER_BUILD_VULKAN=OFF -DRENDERER_BUILD_EXAMPLES=OFF -DRENDERER_BUILD_ANIMATION=OFF -DRENDERER_BUILD_INTERACTION=OFF -DRENDERER_BUILD_AUDIO=OFF
+cmake -S . -B build/core -DRENDERER_BUILD_OPENGL=OFF -DRENDERER_BUILD_VULKAN=OFF -DRENDERER_BUILD_EXAMPLES=OFF -DRENDERER_BUILD_ANIMATION=OFF -DRENDERER_BUILD_INTERACTION=OFF -DRENDERER_BUILD_AUDIO=OFF -DRENDERER_BUILD_TILEMAP=OFF -DRENDERER_BUILD_COLLISION=OFF -DRENDERER_BUILD_PARTICLES=OFF -DRENDERER_BUILD_ENVIRONMENT=OFF -DRENDERER_BUILD_PRESENTATION=OFF -DRENDERER_BUILD_PHYSICS2D=OFF
 cmake --build build/core --config Debug
 ctest --test-dir build/core -C Debug --output-on-failure
 ```
@@ -115,7 +124,7 @@ cmake --install build/windows --config Release
 ```text
 include/renderer/  SDK 公共接口
 src/              核心、共用管线、窗口平台与 OpenGL/Vulkan 后端
-modules/          可选动画、交互和音频模块
+modules/          九个可选模块（动画、交互、音频、地图、碰撞、粒子、环境、表现、二维物理）
 examples/         应用示例与精灵性能测试
 tests/            单元/集成测试及必要素材
 cmake/            SDK 包配置
@@ -229,9 +238,9 @@ Pass 按资源生产顺序声明，可用 dependsOn() 增加显式依赖。范�
 
 ## 诊断与验证
 
-RenderStats 提供场景/阴影/透明 draw call、三角形、上传量、资源数及 CPU 准备/提交时间。drawCalls 包含阴影、场景、ToneMap 和可选的 OIT Resolve，transparencyResolveDrawCalls 单独统计合成绘制；triangles 为场景绘制三角形。提交时间可能包含帧槽等待。GPU 时间来自已完成的旧帧，通过 gpuTimingValid 和 passes 判断有效性。
+RenderStats 提供场景/阴影/透明 draw call、三角形、上传量、资源数及 CPU 准备/提交时间。drawCalls 包含阴影、场景、ToneMap 和可选的 OIT Resolve/FXAA；合成和抗锯齿分别有独立计数。triangles 为场景绘制三角形。提交时间可能包含帧槽等待。GPU 时间来自已完成的旧帧，通过 gpuTimingValid 和 passes 判断有效性。
 
-数学约定：右手系、列主序、列向量、NDC 深度 [0,1]，LESS/清除 1。材质颜色在线性空间计算，颜色纹理按 sRGB 解码，ToneMap 后由 sRGB 目标编码。输入纹理使用其 UV 配套行序；独立图片导入转成左下原点，glTF 保留其 UV/像素配套约定。readback() 显式阻塞并返回左上原点 RGBA8，可用 savePpm() 导出。
+数学约定：右手系、列主序、列向量、NDC 深度 [0,1]，LESS/清除 1。材质颜色在线性空间计算，颜色纹理按 sRGB 解码，最终输出显示编码颜色。独立图片导入转成左下原点，glTF 保留其 UV/像素配套约定。readback() 返回左上原点 RGBA8，可用 savePng()/savePpm() 保存。
 
 ```powershell
 cmake --preset windows-gpu-tests
@@ -239,7 +248,7 @@ cmake --build --preset windows-gpu-tests
 ctest --preset windows-gpu-tests --verbose
 ```
 
-测试包含核心场景、Shader/Graph/导入，以及真实 GPU 上的 Compute、Indirect、资源复用、纹理视图/拷贝、深度、透明、阴影、PBR、ToneMap、GPU 计时、异步提交、窗口缩放和生命周期验证。GPU 测试创建隐藏窗口与独立 FBO，需要可创建 OpenGL 4.5 上下文的桌面环境。
+完整双后端配置包含 48 项 CTest 检查，覆盖核心、九个扩展、窗口和离屏渲染，以及安装后的 SDK 使用方式。窗口测试大多使用隐藏窗口，全屏检查会短暂显示窗口；Vulkan 离屏检查不初始化 GLFW、无需显示服务。复现命令与实机验证范围见[验证说明](docs/VALIDATION.md)。
 
 ```powershell
 .\build\windows\Release\renderer_demo.exe --threaded --hidden --frames 30 --capture build/demo.ppm

@@ -238,11 +238,14 @@ std::shared_ptr<Context> initialize(GLFWwindow *window, bool debug) {
     static std::once_flag loader;
     std::call_once(loader, [] { vkCheck(volkInitialize(), "Load Vulkan runtime"); });
     auto c = std::make_shared<Context>();
-    verify(glfwVulkanSupported() == GLFW_TRUE, "Vulkan loader or driver is unavailable");
     uint32_t count = 0;
-    auto required = glfwGetRequiredInstanceExtensions(&count);
-    verify(required && count, "GLFW cannot create a Vulkan surface");
-    std::vector<const char *> extensions(required, required + count);
+    std::vector<const char *> extensions;
+    if (window) {
+        verify(glfwVulkanSupported() == GLFW_TRUE, "Vulkan loader or driver is unavailable");
+        auto required = glfwGetRequiredInstanceExtensions(&count);
+        verify(required && count, "GLFW cannot create a Vulkan surface");
+        extensions.assign(required, required + count);
+    }
     std::vector<const char *> layers;
     std::vector<VkLayerProperties> layerProperties;
     vkCheck(vkEnumerateInstanceLayerProperties(&count, nullptr), "Enumerate Vulkan layers");
@@ -316,8 +319,9 @@ std::shared_ptr<Context> initialize(GLFWwindow *window, bool debug) {
     if (utils)
         vkCheck(c->i.vkCreateDebugUtilsMessengerEXT(c->instance, &message, nullptr, &c->messenger),
                 "Create Vulkan debug messenger");
-    vkCheck(glfwCreateWindowSurface(c->instance, window, nullptr, &c->surface),
-            "Create Vulkan surface");
+    if (window)
+        vkCheck(glfwCreateWindowSurface(c->instance, window, nullptr, &c->surface),
+                "Create Vulkan surface");
     vkCheck(c->i.vkEnumeratePhysicalDevices(c->instance, &count, nullptr), "Enumerate Vulkan GPUs");
     std::vector<VkPhysicalDevice> devices(count);
     vkCheck(c->i.vkEnumeratePhysicalDevices(c->instance, &count, devices.data()),
@@ -340,7 +344,8 @@ std::shared_ptr<Context> initialize(GLFWwindow *window, bool debug) {
         std::vector<VkExtensionProperties> deviceExtensions(count);
         c->i.vkEnumerateDeviceExtensionProperties(physical, nullptr, &count,
                                                   deviceExtensions.data());
-        if (std::none_of(deviceExtensions.begin(), deviceExtensions.end(), [](const auto &e) {
+        if (window &&
+            std::none_of(deviceExtensions.begin(), deviceExtensions.end(), [](const auto &e) {
                 return std::strcmp(e.extensionName, VK_KHR_SWAPCHAIN_EXTENSION_NAME) == 0;
             }))
             continue;
@@ -350,7 +355,8 @@ std::shared_ptr<Context> initialize(GLFWwindow *window, bool debug) {
         std::optional<uint32_t> graphics, present;
         for (uint32_t index = 0; index < count; ++index) {
             VkBool32 supported = VK_FALSE;
-            c->i.vkGetPhysicalDeviceSurfaceSupportKHR(physical, index, c->surface, &supported);
+            if (window)
+                c->i.vkGetPhysicalDeviceSurfaceSupportKHR(physical, index, c->surface, &supported);
             if ((queues[index].queueFlags & (VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT)) ==
                     (VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT) &&
                 !graphics)
@@ -360,6 +366,8 @@ std::shared_ptr<Context> initialize(GLFWwindow *window, bool debug) {
             if (supported && graphics && *graphics == index)
                 present = index;
         }
+        if (!window)
+            present = graphics;
         if (!graphics || !present || !queues[*graphics].timestampValidBits)
             continue;
         int score = properties.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU ? 2 : 1;
@@ -402,8 +410,8 @@ std::shared_ptr<Context> initialize(GLFWwindow *window, bool debug) {
     device.pEnabledFeatures = &enabled;
     device.queueCreateInfoCount = uint32_t(queues.size());
     device.pQueueCreateInfos = queues.data();
-    device.enabledExtensionCount = 1;
-    device.ppEnabledExtensionNames = &swapchainExtension;
+    device.enabledExtensionCount = window ? 1u : 0u;
+    device.ppEnabledExtensionNames = window ? &swapchainExtension : nullptr;
     vkCheck(c->i.vkCreateDevice(c->physical, &device, nullptr, &c->device), "Create Vulkan device");
     volkLoadDeviceTable(&c->f, c->device);
     c->f.vkGetDeviceQueue(c->device, c->family, 0, &c->queue);
@@ -535,10 +543,12 @@ struct VulkanDevice final : detail::DeviceBackend {
 
     VulkanDevice(std::shared_ptr<renderer::detail::WindowState> state, bool debug)
         : window(std::move(state)) {
-        window->checkThread();
-        verify(window->graphicsApi == GraphicsApi::Vulkan, "Vulkan requires a Vulkan window");
-        verify(!window->rendererAttached, "Window already has a graphics device");
-        c = initialize(window->native, debug);
+        if (window) {
+            window->checkThread();
+            verify(window->graphicsApi == GraphicsApi::Vulkan, "Vulkan requires a Vulkan window");
+            verify(!window->rendererAttached, "Window already has a graphics device");
+        }
+        c = initialize(window ? window->native : nullptr, debug);
         const auto &p = c->properties;
         const auto &l = p.limits;
         caps.backend = "Vulkan";
@@ -561,8 +571,10 @@ struct VulkanDevice final : detail::DeviceBackend {
         caps.storageAlignment = uint32_t(l.minStorageBufferOffsetAlignment);
         caps.maxComputeInvocations = l.maxComputeWorkGroupInvocations;
         caps.indirectDraw = c->features.drawIndirectFirstInstance == VK_TRUE;
-        window->rendererAttached = true;
-        attached = true;
+        if (window) {
+            window->rendererAttached = true;
+            attached = true;
+        }
     }
     ~VulkanDevice() override {
         if (c) {
@@ -1963,6 +1975,7 @@ CompletionToken VulkanDevice::submit(const std::vector<detail::Command> &command
                                                   VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
                                                   query.native->query, value.index);
                     } else if constexpr (std::is_same_v<T, detail::Present>) {
+                        verify(bool(window), "Offscreen Vulkan device cannot present");
                         verify(!rendering, "Present cannot run inside rendering");
                         auto &texture = textures.get(value.texture);
                         verify(texture.desc.format != Format::Depth32Float,
@@ -2074,6 +2087,7 @@ bool VulkanDevice::createSwapchain() {
 }
 void VulkanDevice::swap() {
     checkThread();
+    verify(bool(window), "Offscreen Vulkan device has no swapchain");
     collect();
     if (!presentSource || window->framebufferWidth.load() <= 0 ||
         window->framebufferHeight.load() <= 0)
@@ -2208,6 +2222,11 @@ Device Device::createVulkan(Window &window, bool debug) {
         device->swap();
     };
     impl->backend = std::move(backend);
+    return Device(std::move(impl));
+}
+Device Device::createVulkanOffscreen(bool debug) {
+    auto impl = std::make_unique<Impl>();
+    impl->backend = std::make_shared<VulkanDevice>(nullptr, debug);
     return Device(std::move(impl));
 }
 } // namespace renderer::rhi

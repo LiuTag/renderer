@@ -60,22 +60,30 @@ SpriteViewSnapshot RenderSnapshot::spriteView(const RenderView &view, uint32_t w
         float depth;
     };
     std::vector<Entry> entries;
-    entries.reserve(data.sprites.size());
-    for (const auto &sprite : data.sprites) {
+    entries.reserve(data.sprites.size() + data.batchSpriteCount);
+    const auto appendSprite = [&](const detail::SpriteRecord &sprite) {
         if (!(sprite.component.layerMask & camera->camera.cullingMask))
-            continue;
+            return;
         const auto geometry = detail::spriteGeometry(sprite, camera->world);
         if (!geometry || (view.frustumCulling && !frustum.intersects(geometry->bounds)))
-            continue;
+            return;
         const auto &texture = sprite.sprite->material->texture;
         // 别名共享指针只公开公共 TextureDesc，拥有者仍是内部不可变纹理资源。
         std::shared_ptr<const TextureDesc> pixels(texture, &texture->description);
         entries.push_back({{sprite.node, geometry->world, geometry->bounds, geometry->uvRect,
                             sprite.component.tint, sprite.sprite->description.alphaMode,
                             sprite.sprite->description.alphaCutoff, sprite.component.transparency,
-                            sprite.component.layerMask, std::move(pixels)},
+                            sprite.component.layerMask, std::move(pixels), sprite.instanceId},
                            sprite.sort,
                            -inverse->transformPoint(sprite.sort.point).z});
+    };
+    for (const auto &sprite : data.sprites)
+        appendSprite(sprite);
+    for (const auto &batch : data.batches) {
+        if (view.frustumCulling && !frustum.intersects(batch->bounds))
+            continue;
+        for (const auto &sprite : batch->sprites)
+            appendSprite(sprite);
     }
     std::stable_sort(entries.begin(), entries.end(), [](const auto &a, const auto &b) {
         return detail::spriteSortLess(a.sort, a.depth, b.sort, b.depth);

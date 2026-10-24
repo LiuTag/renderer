@@ -164,4 +164,15 @@ CPU 核心仍依赖 Shader 工具链。离线环境需提前准备相应版本�
 cmake --preset windows -DFETCHCONTENT_SOURCE_DIR_GLFW=C:/deps/glfw-3.4 -DFETCHCONTENT_SOURCE_DIR_GLSLANG=C:/deps/glslang-15.4.0 -DFETCHCONTENT_SOURCE_DIR_SPIRV_CROSS=C:/deps/SPIRV-Cross-vulkan-sdk-1.4.321.0
 ```
 
-关闭 OpenGL 时不需要 GLFW。依赖版本与许可见[第三方依赖](../THIRD_PARTY.md)，后续用法见[接口说明](API_GUIDE.md)。
+两个图形后端都关闭时不需要 GLFW。默认开启的 physics2d 还需要 Box2D 源码；离线时加 `-DFETCHCONTENT_SOURCE_DIR_BOX2D=C:/deps/box2d-3.2.0`，或按需关闭物理模块。依赖版本与许可见[第三方依赖](../THIRD_PARTY.md)，后续用法见[接口说明](API_GUIDE.md)。
+
+## 体验模块化图片世界
+
+默认启用五个新模块时，`renderer_world_demo` 可直接运行：
+
+```powershell
+.\build\windows\Release\renderer_world_demo.exe --backend opengl
+.\build\windows\Release\renderer_world_demo.exe --backend vulkan
+```
+
+Vulkan 命令要求构建时启用对应后端。WASD 移动，Space 闪白，N 昼夜，R 天气，O 透明模式，F 抗锯齿，C 接触阴影。详细接口与边界见[图片世界模块](WORLD_MODULES.md)，独立 SDK 构建见[示例说明](../examples/world/README.md)。

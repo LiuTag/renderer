@@ -11,6 +11,7 @@
 | 开发目标 | 建议阅读 |
 | --- | --- |
 | 第一次接入并显示三维物体 | 第 1–4 节，以及 `development_scene` |
+| 不创建应用窗口并保存渲染图片 | [离屏渲染与 PNG](OFFSCREEN.md)，以及 `examples/offscreen` |
 | 模型查看器、交互相机和编辑工具 | 第 5–9 节，以及 `scene_app.cpp` |
 | 图片角色、树木与三维地面结合的游戏 | [Sprite 专章](SPRITES.md)，以及 `development_sprite` |
 | 播放音乐、音效或添加空间声音 | [音频专章](AUDIO.md)，以及 `renderer_audio_demo` |
@@ -853,3 +854,7 @@ ctest --preset windows-gpu-tests --output-on-failure
 修改公共 API 或安装规则后，重新安装 SDK，并从独立构建目录运行本手册的四个示例及 `examples/sdk_consumer`。只在源码中 add_subdirectory 构建通过，不能证明已安装 SDK 的头文件、传递依赖和包配置完整。
 
 数据/数学/导入变更用 CPU 用例验证；新增图形行为用真实设备和图像/数据回读验证。性能结论还需要真实场景、分辨率和多设备测量，现有实测范围见[验证记录](VALIDATION.md)。两种后端共用高层管线，修改 Shader 或 RHI 能力时同时运行对应后端及像素一致性检查。
+
+## 扩展到图片世界
+
+在 Sprite/动画/拾取基础之上，使用 `SpriteBatch` 承载地图和粒子；按需链接 tilemap、collision、particles、environment、presentation。完整接口、更新次序、参数、生命周期及功能边界见[图片世界模块](WORLD_MODULES.md)。可运行的 `examples/world` 同时支持两种后端、源码构建和独立 SDK 构建，详见[示例说明](../examples/world/README.md)。

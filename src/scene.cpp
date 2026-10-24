@@ -1,5 +1,6 @@
 #include "renderer/scene.hpp"
 #include "internal/scene.hpp"
+#include "internal/sprite.hpp"
 #include <cmath>
 #include <stdexcept>
 
@@ -139,19 +140,7 @@ void Scene::setMeshRenderer(NodeHandle h, const MeshRenderer &c) {
     ++impl_->revision;
 }
 void Scene::setSpriteRenderer(NodeHandle h, const SpriteRenderer &c) {
-    if (!c.sprite || !finite(c.sortOffset) ||
-        (c.billboard != BillboardMode::Fixed && c.billboard != BillboardMode::Upright &&
-         c.billboard != BillboardMode::ViewPlane) ||
-        (c.transparency != SpriteTransparency::Sorted &&
-         c.transparency != SpriteTransparency::FollowView) ||
-        !std::isfinite(c.rotation) || !std::isfinite(c.sizeMultiplier.x) ||
-        !std::isfinite(c.sizeMultiplier.y) || c.sizeMultiplier.x <= 0 || c.sizeMultiplier.y <= 0)
-        throw std::invalid_argument("Invalid SpriteRenderer geometry or mode");
-    for (float v : {c.tint.x, c.tint.y, c.tint.z, c.tint.w})
-        if (!std::isfinite(v) || v < 0)
-            throw std::invalid_argument("Sprite tint must be finite and nonnegative");
-    if (c.tint.w > 1)
-        throw std::invalid_argument("Sprite alpha must be in [0,1]");
+    detail::validateSprite(c);
     impl_->nodes.get(h).spriteRenderer = c;
     ++impl_->revision;
 }

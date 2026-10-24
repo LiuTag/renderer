@@ -144,6 +144,8 @@ scene.setLocalTransform(second.root, Mat4::translation({3, 0, 0}));
 
 ## 帧提交、线程与等待
 
+通过 `Renderer::createVulkanOffscreen()` 或 Windows 的 `createOpenGLOffscreen()` 可以不创建应用 Window，渲染到独立纹理并直接保存 PNG。场景与视图接口一致，离屏不需要 present；平台差异、尺寸和同步约定见[离屏说明](OFFSCREEN.md)。
+
 键鼠及窗口状态通过 `Window::subscribe<T>()` 或统一 WindowEvent 回调订阅，返回的 EventSubscription 采用 PImpl 并在析构时取消。用户回调在主线程 pollEvents 中有序执行，不进入渲染线程。具体事件、重入/异常和生命周期约定见[窗口事件说明](WINDOW_EVENTS.md)。
 
 窗口支持 `WindowConfig.mode`、`Window::setMode()` 和 `Window::mode()`，可选普通窗口、无边框和独占全屏。切换在主线程执行，保留上下文；退出时恢复先前位置、尺寸和最大化状态。显示器、独占视频模式及 resize 约束见[全屏说明](FULLSCREEN.md)。
@@ -167,7 +169,9 @@ engine.present();
 | `render(snapshot, view)` | 等价于 `submit(...).get()`，等待 CPU 准备及命令提交 |
 | `future.get()` | 不代表 GPU 已完成，也不交换窗口缓冲 |
 | `present()` | 按队列顺序切换到上下文线程交换缓冲；可能受垂直同步影响 |
-| `readback()` | 阻塞读取最近输出，可用 `Image::savePpm()` 保存 |
+| `readback()` | 阻塞读取最近输出，可用 `Image::savePng()` / `savePpm()` 保存 |
+| `renderToImage(snapshot, view)` | 一个队列任务内绘制并回读指定快照；同步等待 GPU，无需 present |
+| `resizeOffscreen(width, height)` | 仅独立纹理目标可用；下一次绘制重建附件 |
 | `waitIdle()` | 等待此前任务及 GPU 工作完成 |
 | Renderer 析构 | 排空队列并在上下文线程销毁资源，最后释放保留的窗口引用 |
 

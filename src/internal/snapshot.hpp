@@ -7,6 +7,7 @@
 #include "assets.hpp"
 #include "renderer/render_snapshot.hpp"
 #include "sprite.hpp"
+#include "sprite_batch.hpp"
 #include <stdexcept>
 
 namespace renderer::detail {
@@ -23,6 +24,7 @@ struct InstanceRecord {
     bool mirrored;
     bool castShadow = true, receiveShadow = true;
     Vec4 uvRect{0, 0, 1, 1}, tint{1, 1, 1, 1};
+    Vec4 colorOverlay{}, outlineColor{}, effects{};
     std::optional<SpriteSort> spriteSort;
     bool orderedSprite = false;
 };
@@ -51,6 +53,8 @@ struct RenderSnapshot::Impl {
     uint64_t revision = 0;
     std::vector<detail::InstanceRecord> instances;
     std::vector<detail::SpriteRecord> sprites;
+    std::vector<std::shared_ptr<const detail::SpriteBatchData>> batches;
+    size_t batchSpriteCount = 0;
     std::vector<detail::CameraRecord> cameras;
     std::vector<detail::LightRecord> lights;
 };

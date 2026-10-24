@@ -5,6 +5,7 @@
 #ifndef RENDERER_INCLUDE_RENDERER_RENDERER_HPP_INCLUDED
 #define RENDERER_INCLUDE_RENDERER_RENDERER_HPP_INCLUDED
 #include "renderer/render_snapshot.hpp"
+#include <filesystem>
 #include <future>
 #include <memory>
 #include <string>
@@ -22,6 +23,10 @@ struct RendererConfig {
     bool debug = true;
     bool renderThread = false;    // 将上下文与 GPU 操作交给专用线程。
     uint32_t maxQueuedFrames = 2; // 待执行任务队列上限，满时 submit 会等待空位。
+};
+/** @brief 独立纹理渲染目标的像素尺寸，与窗口/DPI 无关。 */
+struct OffscreenConfig {
+    uint32_t width = 1280, height = 720;
 };
 /** @brief 直通、ACES 或 Reinhard 的 HDR 色调映射方式。 */
 enum class ToneMapping { None, ACES, Reinhard };
@@ -45,6 +50,13 @@ struct RenderView {
     ToneMapping toneMapping = ToneMapping::None;
     TransparencyMode transparency = TransparencyMode::SortedAlpha;
     AntiAliasing antiAliasing = AntiAliasing::None; ///< 按视图选择，可逐帧切换，默认关闭。
+    Vec3 colorMultiply{1, 1, 1}, colorAdd{};        ///< ToneMap 后的线性调色乘数/偏移。
+    float saturation = 1;                           ///< 饱和度，[0,4]。
+    bool contactShadows = false;        ///< 基于场景不透明/Mask 深度的屏幕空间接触阴影。
+    float contactShadowStrength = .6f;  ///< 阴影强度，[0,1]。
+    float contactShadowDistance = 1;    ///< 世界空间最大采样距离，必须为正。
+    float contactShadowThickness = .1f; ///< 世界空间命中厚度容差，必须为正。
+    uint32_t contactShadowSteps = 12;   ///< 射线步数，[1,32]。
 };
 /**
  * @brief 一个渲染 Pass 的 GPU 计时记录，单位为毫秒。
@@ -85,7 +97,7 @@ struct DeviceInfo {
     std::string version;
 };
 /**
- * @brief 显示编码、左上原点的 RGBA8 输出图像及 PPM 保存接口。
+ * @brief 显示编码、左上原点的 RGBA8 输出图像及 PNG/PPM 保存接口。
  */
 struct Image {
     uint32_t width = 0, height = 0;
@@ -97,12 +109,17 @@ struct Image {
      * @return 无。
      */
     void savePpm(const std::string &path) const;
+    /** @brief 保存 RGBA PNG，保留 Alpha 与左上行序，自动创建父目录。
+     * @param path 本地路径，使用 filesystem::path 可传入 Unicode 路径。
+     * @return 无；无效输入、带过滤字节的像素超过约 1 GiB、编码或写文件失败时抛出异常。
+     */
+    void savePng(const std::filesystem::path &path) const;
 };
 
 // 高层渲染入口；创建、使用与析构建议集中在应用主线程。
 // PImpl 隐藏队列及后端；同一个窗口只能由一个 Renderer 或低层 Device 持有上下文。
 /**
- * @brief 以 PImpl 隐藏后端与队列的高层帧渲染服务，同一窗口仅绑定一个 Renderer/Device。
+ * @brief 以 PImpl 隐藏后端与队列的高层渲染服务，可选择窗口或独立离屏纹理目标。
  */
 class Renderer {
   public:
@@ -120,6 +137,20 @@ class Renderer {
      * @return 可移动的渲染器；创建失败抛出异常。
      */
     static Renderer createVulkan(Window &window, const RendererConfig &config = {});
+    /** @brief 创建独立 OpenGL 纹理渲染器，不需要应用 Window。
+     * @param target 每边 [1,16384] 的像素尺寸，还须满足设备纹理上限。
+     * @param config 管线与可选渲染线程配置。
+     * @return 渲染器；目前仅 Windows WGL pbuffer。初始化有短暂引导窗口，驱动可能保留内部隐藏 HWND。
+     */
+    static Renderer createOpenGLOffscreen(const OffscreenConfig &target = {},
+                                          const RendererConfig &config = {});
+    /** @brief 创建 Vulkan 离屏渲染器，全程不创建窗口、表面或交换链。
+     * @param target 每边 [1,16384] 的像素尺寸，还须满足设备纹理上限。
+     * @param config 管线与可选渲染线程配置。
+     * @return 渲染器，只需要 Vulkan 设备和驱动，不需要显示服务。
+     */
+    static Renderer createVulkanOffscreen(const OffscreenConfig &target = {},
+                                          const RendererConfig &config = {});
     /**
      * @brief 释放本对象持有的状态与资源引用。
      * @return 无（析构函数）。
@@ -151,7 +182,7 @@ class Renderer {
     Renderer &operator=(const Renderer &other) = delete;
 
     // 等价于 submit(...).get()：等待 CPU 录制/提交结束，不代表 GPU 已执行完毕。
-    // 先绘制到自有离屏目标，再拷贝到窗口；窗口交换缓冲需显式调用 present()。
+    // 先绘制到自有纹理；窗口模式再拷贝到窗口，交换缓冲需显式调用 present()。
     /**
      * @brief 渲染一帧并等待 CPU 提交完成；GPU 可能仍执行，窗口交换需调用 present。
      * @param snapshot 不可变场景快照。
@@ -170,7 +201,7 @@ class Renderer {
     std::future<RenderStats> submit(RenderSnapshot snapshot, RenderView view);
     /**
      * @brief 在拥有上下文的线程交换窗口缓冲。
-     * @return 无。
+     * @return 无；离屏渲染器没有交换链，调用会抛出 logic_error。
      */
     void present();
     /**
@@ -180,9 +211,21 @@ class Renderer {
     DeviceInfo deviceInfo() const;
     /**
      * @brief 阻塞回读最近一帧的最终图像。
-     * @return 左上原点、显示编码的 RGBA8 图像。
+     * @return 左上原点、显示编码的 RGBA8 图像；首次渲染前调用会抛出异常。
      */
     Image readback(); // 阻塞回读最近的输出，用于截图与测试。
+    /** @brief 在同一队列任务中渲染并回读，确保返回本快照的图像。
+     * @param snapshot 不可变快照。
+     * @param view 当前视图设置。
+     * @return 显示编码、左上原点 RGBA8 图像；同步等待 GPU，不需要 present。
+     */
+    Image renderToImage(const RenderSnapshot &snapshot, const RenderView &view);
+    /** @brief 调整独立纹理目标尺寸，按队列顺序生效，下一帧重建附件。
+     * @param width [1,16384] 内且不超过设备纹理上限的像素宽。
+     * @param height [1,16384] 内且不超过设备纹理上限的像素高。
+     * @return 无；窗口渲染器或无效尺寸会抛出异常，拒绝后保留原尺寸。
+     */
+    void resizeOffscreen(uint32_t width, uint32_t height);
     /**
      * @brief 等待此前排队任务以及 GPU 工作完成。
      * @return 无。

@@ -87,6 +87,9 @@ struct SpriteRenderer {
     Vec3 sortOffset{};                          ///< 节点局部排序点偏移；默认使用落地点。
     SpriteTransparency transparency = SpriteTransparency::Sorted;
     bool castShadow = false, receiveShadow = false; ///< 投影沿当前主视图的图片几何生成。
+    Vec4 colorOverlay{};    ///< RGB 覆盖色和 [0,1] 混合权重；可用于闪白，不改变 Alpha。
+    Vec4 outlineColor{};    ///< 内轮廓描边颜色和 [0,1] 混合权重。
+    float outlineWidth = 0; ///< 原纹理像素单位的内描边宽度，[0,16]，0 关闭。
 };
 /**
  * @brief 将子树精灵作为一个整体与外界排序；最外层分组生效，部件仍按自身顺序排序。

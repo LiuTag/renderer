@@ -2,7 +2,9 @@
 
 [返回文档导航](README.md) · [完整二次开发手册](DEVELOPMENT_GUIDE.md)
 
-SDK 安装公共头文件、核心静态库、可选 OpenGL/Vulkan/animation/interaction/audio 静态库及完整链接依赖，并提供 `find_package(renderer CONFIG)` 配置。使用者不需要访问引擎源码、下载依赖或安装 Vulkan SDK。运行图形功能需要相应的 OpenGL 4.5 Core 或 Vulkan 1.3 驱动与显示环境。
+SDK 安装公共头文件、核心静态库、可选 OpenGL/Vulkan 后端及九个扩展静态库及完整链接依赖，并提供 `find_package(renderer CONFIG)` 配置。使用者不需要访问引擎源码、下载依赖或安装 Vulkan SDK。运行图形功能需要相应的 OpenGL 4.5 Core 或 Vulkan 1.3 驱动；窗口呈现需要显示环境，Vulkan 离屏不需要。
+
+[离屏渲染](OFFSCREEN.md)使用同一套后端目标，无额外模块。PNG 编码随 core 静态提供，不导出 stb 头文件或额外 PNG/zlib 库；Windows OpenGL 的 WGL pbuffer 系统库由 CMake 自动传递。安装包包含 `share/renderer/examples/offscreen` 和共用图集，可独立构建并直接输出 PNG。
 
 ## 构建并安装到指定目录
 
@@ -64,11 +66,20 @@ C:/SDK/renderer/
 | 目标 | 用途 |
 | --- | --- |
 | `renderer::core` | 场景、资源、模型导入、快照、Shader 编译、RHI 接口及图编译 |
-| `renderer::opengl` | 窗口、OpenGL Device 工厂和高层 Renderer，自动传递 core |
-| `renderer::vulkan` | Vulkan Device/Renderer 工厂及交换链，自动传递 core；需在源码构建时启用 |
+| `renderer::opengl` | 窗口及 Windows pbuffer 离屏 Device/Renderer 工厂，自动传递 core |
+| `renderer::vulkan` | 窗口和无窗口 Device/Renderer 工厂，自动传递 core；需在源码构建时启用 |
 | `renderer::animation` | 可选方向序列帧、动画播放及事件，只依赖 core |
 | `renderer::interaction` | 可选屏幕射线、地面求交、Alpha 拾取及筛选，只依赖 core |
 | `renderer::audio` | 可选音乐/音效与混音，只依赖 core 公共类型；miniaudio 实现编入库内 |
+
+| `renderer::tilemap` | 稀疏瓦片地图、脏块缓存、批次发布和后台流式加载 |
+| `renderer::collision` | XZ 圆/AABB 查询、连续圆形移动与滑动 |
+| `renderer::particles` | CPU 固定步图片粒子与火/烟/雨/雪预设 |
+| `renderer::environment` | 昼夜太阳、调色与天气强度 |
+| `renderer::presentation` | Scene 精灵遮挡淡出、闪白与恢复 |
+| `renderer::physics2d` | 可选 Box2D 刚体、形状、固定步、事件、查询、关节和场景同步 |
+
+上述五个扩展各自只依赖 core。按需链接、线程契约和完整代码见[图片世界模块](WORLD_MODULES.md)。
 
 ## 从外部工程接入
 
@@ -108,7 +119,7 @@ target_link_libraries(my_app PRIVATE renderer::vulkan)
 ## 仅安装核心 SDK
 
 ```powershell
-cmake -S . -B build/core -DRENDERER_BUILD_OPENGL=OFF -DRENDERER_BUILD_VULKAN=OFF -DRENDERER_BUILD_EXAMPLES=OFF -DRENDERER_BUILD_ANIMATION=OFF -DRENDERER_BUILD_INTERACTION=OFF -DRENDERER_BUILD_AUDIO=OFF -DCMAKE_INSTALL_PREFIX=C:/SDK/renderer-core
+cmake -S . -B build/core -DRENDERER_BUILD_OPENGL=OFF -DRENDERER_BUILD_VULKAN=OFF -DRENDERER_BUILD_EXAMPLES=OFF -DRENDERER_BUILD_ANIMATION=OFF -DRENDERER_BUILD_INTERACTION=OFF -DRENDERER_BUILD_AUDIO=OFF -DRENDERER_BUILD_TILEMAP=OFF -DRENDERER_BUILD_COLLISION=OFF -DRENDERER_BUILD_PARTICLES=OFF -DRENDERER_BUILD_ENVIRONMENT=OFF -DRENDERER_BUILD_PRESENTATION=OFF -DRENDERER_BUILD_PHYSICS2D=OFF -DCMAKE_INSTALL_PREFIX=C:/SDK/renderer-core
 cmake --build build/core --config Debug --parallel 6
 cmake --install build/core --config Debug
 ```
@@ -146,3 +157,11 @@ SDK 中也包含此示例，默认位于 `share/renderer/examples/sdk_consumer`�
 所有自有头文件使用包含相对路径的唯一宏保护：`#ifndef`、`#define`、末尾 `#endif`。第三方与生成文件保留上游格式。
 
 文件开头的 Doxygen `@file` / `@brief` 说明文件职责，类和结构体开头的 `@brief` 说明其用途。函数声明前说明行为，每个具名参数使用 `@param` 描述含义、单位、范围和必要的生命周期约束；模板参数使用 `@tparam`。`@return` 描述返回结果、空值或失败的语义，void 和构造/析构函数明确标为无返回值。对外服务类继续使用 PImpl，值类型公开其必要字段。
+
+## 图片世界 SDK 示例
+
+启用五个新模块时，SDK 增加对应头文件和五个静态库；它们不引入第三方依赖。`share/renderer/examples/world` 包含可独立构建的集成场景，依赖同级 `examples/common` 的素材生成头文件，单独复制时应一并保留。构建与测试步骤见[示例说明](../examples/world/README.md)。更新含新值类型字段的 SDK 后必须重新编译应用。
+
+流式接口 `<renderer/tilemap/streaming.hpp>` 随 tilemap 组件安装，后台线程和区块文件实现已包含在同一个 `renderer_tilemap` 库内。无需额外线程库配置或第三方头文件；core 已传递 Threads/C++20 要求。关闭 tilemap 同时关闭流式实现、头文件和测试。详情见[流式加载](STREAMING.md)。
+
+`renderer::physics2d` 随启用配置安装公共头文件和 renderer_physics2d 静态库；私有 Box2D 静态库自动传递。完整 SDK 每个配置新增两个库，共 22 个。上游独立安装被排除，不安装 Box2D 开发头文件或第二套包配置。组件、固定版本和应用契约见[Box2D 文档](PHYSICS2D.md)。

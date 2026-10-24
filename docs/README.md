@@ -5,10 +5,13 @@
 | 文档 | 适合解决的问题 |
 | --- | --- |
 | [项目概览](../README.md) | 已实现什么、有哪些功能边界 |
+| [版本变更](../CHANGELOG.md) | 当前源码版本相对于初始提交增加了哪些能力 |
 | [快速开始](GETTING_STARTED.md) | 如何构建、运行、接入工程并绘制第一帧 |
+| [离屏渲染与 PNG](OFFSCREEN.md) | 无应用窗口的双后端纹理渲染、直接保存 PNG、尺寸/线程/平台约束及独立 SDK 示例 |
 | [Vulkan 后端](VULKAN.md) | 如何开启 Vulkan、创建窗口/设备、复用前端与验证交换链和双后端一致性 |
 | [SDK 安装与二次开发](SDK.md) | 如何指定安装目录、使用 find_package 和验证独立外部工程 |
-| [模块划分与按需接入](MODULES.md) | core/opengl/animation/interaction/audio 的边界、依赖、构建开关和 SDK 迁移 |
+| [模块划分与按需接入](MODULES.md) | 核心、双后端与九个可选模块的边界、依赖、构建开关和 SDK 迁移 |
+| [Box2D 二维物理](PHYSICS2D.md) | 刚体、常用形状、固定步、受力、事件、查询、距离关节及 Scene/流式同步 |
 | [音乐与音效](AUDIO.md) | 音乐流、并发音效、混音分组、空间定位、播放事件和线程约定 |
 | [二次开发手册](DEVELOPMENT_GUIDE.md) | 从 SDK 接入到交互场景、Compute 和自定义 RenderGraph 的完整开发路径 |
 | [接口与使用约定](API_GUIDE.md) | 如何构建场景树、管理资源、提交帧及使用 RHI / RenderGraph |
@@ -16,11 +19,14 @@
 | [可选抗锯齿 FXAA](ANTI_ALIASING.md) | 如何按视图开启抗锯齿、理解颜色空间、成本与兼容方式 |
 | [精灵数量与性能对比](SPRITE_BENCHMARK.md) | 如何测试森林精灵数量、对比双后端及线程，并读取 CSV 和帧耗时 |
 | [图片角色与三维世界](SPRITES.md) | Sprite/图集、Billboard、方向动画、排序组、拾取和森林示例 |
+| [图片世界模块](WORLD_MODULES.md) | 批量精灵、地图分块、连续碰撞、粒子、昼夜天气、淡出/闪白/描边/接触阴影 |
+| [地图流式加载](STREAMING.md) | 后台读取、发布预算、滞回卸载、编辑保存、物件/碰撞生命周期和物理库选择 |
 | [窗口与输入事件](WINDOW_EVENTS.md) | 如何订阅键鼠、窗口状态和拖放，以及安全取消订阅 |
 | [窗口与全屏模式](FULLSCREEN.md) | 如何创建和切换无边框/独占全屏，并恢复窗口位置、尺寸和最大化状态 |
 | [架构与扩展](ARCHITECTURE.md) | 数据如何流动、PImpl 如何划界、同步和资源复用如何实现 |
 | [验证与排错](VALIDATION.md) | 如何运行测试、理解统计、定位常见问题，以及本机验证范围 |
 | [源码示例](../examples/README.md) | 无需安装 SDK 构建全部示例，以及独立 SDK 示例的用法 |
+| [离屏森林示例](../examples/offscreen/README.md) | 无应用窗口直接保存森林 PNG，以及独立 SDK 工程的构建方式 |
 | [源码测试](../tests/README.md) | 测试总开关、OpenGL 开关及只编库/示例/测试的组合 |
 | [实现清单](../IMPLEMENTATION.md) | 当前实现状态及明确保留的扩展点 |
 | [第三方依赖](../THIRD_PARTY.md) | 依赖版本、源码来源、再生成方式及许可文件 |
@@ -35,6 +41,7 @@
 | CPU 资源与模型导入 | `include/renderer/assets.hpp`、`src/assets.cpp`、`src/model.cpp` |
 | 图片与视图渲染数据 | `include/renderer/sprite.hpp`、`sprite_snapshot.hpp` 及对应 cpp |
 | 动画和交互扩展 | `modules/animation`、`modules/interaction`，仅依赖核心公共接口 |
+| 图片世界扩展 | `modules/tilemap`、`collision`、`particles`、`environment`、`presentation`，仅依赖核心公共接口 |
 | 音频扩展 | `modules/audio`，独立 PImpl，miniaudio 不进入公共头文件 |
 | 不可变快照与提取缓存 | `include/renderer/render_snapshot.hpp`、`src/renderer.cpp` |
 | 裁剪、排序、实例合批与阴影投影 | `src/frame_builder.cpp` |

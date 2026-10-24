@@ -5,6 +5,7 @@
 #include "renderer/render_graph.hpp"
 #include "renderer/renderer.hpp"
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <cstring>
@@ -47,6 +48,7 @@ struct RhiRenderBackend final : detail::Backend {
     rhi::Device device;
     RendererConfig config;
     std::shared_ptr<detail::WindowState> window;
+    std::atomic<uint64_t> targetSize{0};
     DeviceInfo info;
     ShaderCompiler compiler;
     ShaderArtifact sceneVertex, sceneFragment, oitFragment, shadowVertex, shadowFragment,
@@ -69,8 +71,11 @@ struct RhiRenderBackend final : detail::Backend {
     detail::PreparedFrame *currentFrame = nullptr;
     FrameSlot *currentSlot = nullptr;
     RenderStats lastTiming;
-    explicit RhiRenderBackend(rhi::Device input, Window &w, const RendererConfig &c)
-        : device(std::move(input)), config(c), window(detail::WindowAccess::state(w)) {
+    explicit RhiRenderBackend(rhi::Device input, std::shared_ptr<detail::WindowState> state,
+                              const RendererConfig &c, const OffscreenConfig &target = {})
+        : device(std::move(input)), config(c), window(std::move(state)) {
+        if (!window)
+            resizeOffscreen(target.width, target.height);
         if (!c.framesInFlight || c.framesInFlight > 8 || !c.initialInstanceCapacity ||
             c.initialInstanceCapacity > 1000000 || !c.maxQueuedFrames || c.maxQueuedFrames > 8)
             throw std::invalid_argument("Invalid renderer configuration");
@@ -154,7 +159,8 @@ struct RhiRenderBackend final : detail::Backend {
         // 原生资源全部归 RHI 设备管理；先释放图持有的引用，再释放设备。
         graph.reset();
         device.waitIdle();
-        window->rendererThreaded = false;
+        if (window)
+            window->rendererThreaded = false;
     }
     void ensureCapacity(FrameSlot &slot, size_t required) {
         if (slot.capacity >= required)
@@ -284,6 +290,9 @@ struct RhiRenderBackend final : detail::Backend {
         desc.attributes.push_back({10, 1, 4, 128});
         desc.attributes.push_back({11, 1, 4, 144});
         desc.attributes.push_back({12, 1, 4, 160});
+        desc.attributes.push_back({13, 1, 4, 176});
+        desc.attributes.push_back({14, 1, 4, 192});
+        desc.attributes.push_back({15, 1, 4, 208});
         auto handle = device.createGraphicsPipeline(desc);
         pipelines.emplace(key, handle);
         return handle;
@@ -486,13 +495,18 @@ struct RhiRenderBackend final : detail::Backend {
         builder.addPass(
             "ToneMap",
             {{hdr, rhi::Access::SampledRead},
+             {depth, rhi::Access::SampledRead},
              {toneTarget, rhi::Access::ColorWrite, rhi::Stage::Attachment}},
-            [this, hdr, toneTarget, aa](auto &encoder, const auto &resources) {
+            [this, hdr, depth, toneTarget, aa](auto &encoder, const auto &resources) {
                 if (!postGroup)
                     postGroup = device.createBindingGroup({2,
                                                            {{.binding = 0,
                                                              .kind = BindingKind::SampledTexture,
                                                              .texture = resources.texture(hdr),
+                                                             .sampler = postSampler},
+                                                            {.binding = 1,
+                                                             .kind = BindingKind::SampledTexture,
+                                                             .texture = resources.texture(depth),
                                                              .sampler = postSampler}}});
                 rhi::RenderingDesc desc;
                 desc.colors.push_back({resources.texture(toneTarget)});
@@ -523,22 +537,36 @@ struct RhiRenderBackend final : detail::Backend {
                                 encoder.draw(3);
                                 encoder.endRendering();
                             });
-        builder.addPass(
-            "Present", {{display, rhi::Access::Present, rhi::Stage::Transfer}},
-            [display](auto &encoder, const auto &resources) {
-                encoder.present(resources.texture(display));
-            },
-            true);
+        if (window)
+            builder.addPass(
+                "Present", {{display, rhi::Access::Present, rhi::Stage::Transfer}},
+                [display](auto &encoder, const auto &resources) {
+                    encoder.present(resources.texture(display));
+                },
+                true);
         builder.exportResource(display);
         graph.emplace(builder.compile());
     }
     std::pair<int, int> framebufferSize() const override {
+        if (!window) {
+            const auto size = targetSize.load();
+            return {int(size >> 32), int(size & 0xffffffffu)};
+        }
         window->checkThread();
         int w = 0, h = 0;
         glfwGetFramebufferSize(window->native, &w, &h);
         window->framebufferWidth = w;
         window->framebufferHeight = h;
         return {w, h};
+    }
+    void resizeOffscreen(uint32_t w, uint32_t h) override {
+        if (window)
+            throw std::logic_error("resizeOffscreen requires an offscreen renderer");
+        detail::validateOffscreen({w, h});
+        const auto max = device.capabilities().maxTextureSize;
+        if (w > max || h > max)
+            throw std::invalid_argument("Offscreen size exceeds device capability");
+        targetSize.store((uint64_t(w) << 32) | h);
     }
     RenderStats draw(detail::PreparedFrame frame, int w, int h) override {
         const auto start = std::chrono::steady_clock::now();
@@ -623,6 +651,8 @@ struct RhiRenderBackend final : detail::Backend {
         device.waitIdle();
     }
     void present() override {
+        if (!window)
+            throw std::logic_error("Offscreen renderer has no window to present");
         detail::RhiAccess::backend(device).swap();
     }
     void releaseContext() override {
@@ -635,14 +665,21 @@ struct RhiRenderBackend final : detail::Backend {
         return window;
     }
     void setThreaded(bool enabled) override {
-        window->rendererThreaded = enabled;
+        if (window)
+            window->rendererThreaded = enabled;
     }
 };
 } // namespace
 namespace detail {
 std::unique_ptr<Backend> makeRenderBackend(rhi::Device device, Window &window,
                                            const RendererConfig &config) {
-    return std::make_unique<RhiRenderBackend>(std::move(device), window, config);
+    return std::make_unique<RhiRenderBackend>(std::move(device), WindowAccess::state(window),
+                                              config);
+}
+std::unique_ptr<Backend> makeOffscreenRenderBackend(rhi::Device device,
+                                                    const OffscreenConfig &target,
+                                                    const RendererConfig &config) {
+    return std::make_unique<RhiRenderBackend>(std::move(device), nullptr, config, target);
 }
 } // namespace detail
 } // namespace renderer

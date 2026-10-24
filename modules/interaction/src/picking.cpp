@@ -151,7 +151,7 @@ std::optional<SpriteHit> SceneQuery::pickSprite(Vec2 pixel, float alphaThreshold
             continue;
         if (mode == AlphaMode::Blend && (a <= 0 || a < alphaThreshold))
             continue;
-        SpriteHit hit{entry.source->node, world, uv, t};
+        SpriteHit hit{entry.source->node, world, uv, t, entry.source->instanceId};
         if (mode != AlphaMode::Blend) {
             if (t < opaqueDistance) {
                 opaqueDistance = t;
@@ -161,6 +161,7 @@ std::optional<SpriteHit> SceneQuery::pickSprite(Vec2 pixel, float alphaThreshold
             candidates.push_back({&entry, hit});
     }
     std::optional<SpriteHit> result = opaque, oit;
+    bool resultIsOpaque = opaque.has_value();
     // 常规透明与渲染同序，最后覆盖者优先。OIT 本身没有确定前后顺序，选最近交点。
     for (const auto &candidate : candidates) {
         if (candidate.hit.distance >= opaqueDistance)
@@ -171,10 +172,12 @@ std::optional<SpriteHit> SceneQuery::pickSprite(Vec2 pixel, float alphaThreshold
         if (weighted) {
             if (!oit || candidate.hit.distance < oit->distance)
                 oit = candidate.hit;
-        } else
+        } else {
             result = candidate.hit;
+            resultIsOpaque = false;
+        }
     }
-    if (oit && (!result || (opaque && result->node == opaque->node)))
+    if (oit && (!result || resultIsOpaque))
         result = oit;
     return result;
 }

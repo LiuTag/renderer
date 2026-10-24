@@ -21,10 +21,10 @@ RenderSnapshot &RenderSnapshot::operator=(const RenderSnapshot &) = default;
 RenderSnapshot::RenderSnapshot(RenderSnapshot &&) noexcept = default;
 RenderSnapshot &RenderSnapshot::operator=(RenderSnapshot &&) noexcept = default;
 size_t RenderSnapshot::instanceCount() const {
-    return impl_ ? impl_->instances.size() + impl_->sprites.size() : 0;
+    return impl_ ? impl_->instances.size() + impl_->sprites.size() + impl_->batchSpriteCount : 0;
 }
 size_t RenderSnapshot::spriteCount() const {
-    return impl_ ? impl_->sprites.size() : 0;
+    return impl_ ? impl_->sprites.size() + impl_->batchSpriteCount : 0;
 }
 size_t RenderSnapshot::cameraCount() const {
     return impl_ ? impl_->cameras.size() : 0;
@@ -59,6 +59,10 @@ RenderExtractor::~RenderExtractor() = default;
 RenderExtractor::RenderExtractor(RenderExtractor &&) noexcept = default;
 RenderExtractor &RenderExtractor::operator=(RenderExtractor &&) noexcept = default;
 RenderSnapshot RenderExtractor::extract(Scene &scene, const AssetStore &assets) {
+    return extract(scene, assets, {});
+}
+RenderSnapshot RenderExtractor::extract(Scene &scene, const AssetStore &assets,
+                                        std::span<const SpriteBatch> batches) {
     scene.impl_->updateDerived();
     // 提取器可被不同场景复用，但索引相同的节点不能共享上一场景的空间缓存。
     if (impl_->owner != scene.root().owner) {
@@ -68,6 +72,11 @@ RenderSnapshot RenderExtractor::extract(Scene &scene, const AssetStore &assets) 
     ++impl_->extraction;
     auto data = std::make_shared<RenderSnapshot::Impl>();
     data->revision = scene.revision();
+    for (const auto &batch : batches)
+        if (auto dataBatch = detail::SpriteBatchAccess::data(batch)) {
+            data->batchSpriteCount += dataBatch->sprites.size();
+            data->batches.push_back(std::move(dataBatch));
+        }
     struct Group {
         NodeHandle node;
         SortingGroup component;
@@ -192,6 +201,21 @@ void Renderer::waitIdle() {
 }
 Image Renderer::readback() {
     return impl_->enqueue([&] { return impl_->backend->readback(); }).get();
+}
+Image Renderer::renderToImage(const RenderSnapshot &snapshot, const RenderView &view) {
+    const auto [width, height] = impl_->backend->framebufferSize();
+    if (width <= 0 || height <= 0)
+        throw std::logic_error("Cannot capture a zero-sized viewport");
+    return impl_
+        ->enqueue([backend = impl_->backend.get(), snapshot, view, width, height] {
+            backend->draw(detail::prepareFrame(snapshot, view, uint32_t(width), uint32_t(height)),
+                          width, height);
+            return backend->readback();
+        })
+        .get();
+}
+void Renderer::resizeOffscreen(uint32_t width, uint32_t height) {
+    impl_->enqueue([&] { impl_->backend->resizeOffscreen(width, height); }).get();
 }
 void Renderer::present() {
     impl_->enqueue([&] { impl_->backend->present(); }).get();

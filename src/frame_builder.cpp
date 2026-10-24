@@ -39,6 +39,23 @@ PreparedFrame prepareFrame(const RenderSnapshot &snapshot, const RenderView &vie
     const auto &cameraData = camera->camera;
     const auto projection = cameraProjection(cameraData, width, height);
     frame.uniforms.viewProjection = projection * (*inverse);
+    if (!finite(view.colorMultiply) || !finite(view.colorAdd) || !std::isfinite(view.saturation) ||
+        view.saturation < 0 || view.saturation > 4 || !std::isfinite(view.contactShadowStrength) ||
+        view.contactShadowStrength < 0 || view.contactShadowStrength > 1 ||
+        !std::isfinite(view.contactShadowDistance) || view.contactShadowDistance <= 0 ||
+        !std::isfinite(view.contactShadowThickness) || view.contactShadowThickness <= 0 ||
+        view.contactShadowSteps < 1 || view.contactShadowSteps > 32)
+        throw std::invalid_argument("Invalid color grading or contact shadow parameters");
+    const auto inverseViewProjection = frame.uniforms.viewProjection.inverse();
+    if (!inverseViewProjection)
+        throw std::invalid_argument("View-projection matrix is singular");
+    frame.uniforms.inverseViewProjection = *inverseViewProjection;
+    frame.uniforms.colorMultiplySaturation = {view.colorMultiply.x, view.colorMultiply.y,
+                                              view.colorMultiply.z, view.saturation};
+    frame.uniforms.colorAdd = {view.colorAdd.x, view.colorAdd.y, view.colorAdd.z, 0};
+    frame.uniforms.contactParameters = {view.contactShadows ? view.contactShadowStrength : 0,
+                                        view.contactShadowDistance, view.contactShadowThickness,
+                                        float(view.contactShadowSteps)};
     const Vec3 eye = camera->world.transformPoint({0, 0, 0});
     frame.uniforms.cameraPosition = {eye.x, eye.y, eye.z, 1};
     Vec3 direction = normalized(view.lightDirection);
@@ -78,12 +95,13 @@ PreparedFrame prepareFrame(const RenderSnapshot &snapshot, const RenderView &vie
         throw std::length_error("Too many instances");
     frame.stats.sceneInstances = static_cast<uint32_t>(snapshot.instanceCount());
     std::vector<InstanceRecord> spriteInstances;
-    spriteInstances.reserve(data.sprites.size());
-    for (const auto &s : data.sprites) {
+    spriteInstances.reserve(data.sprites.size() + data.batchSpriteCount);
+    const Frustum frustum(frame.uniforms.viewProjection);
+    const auto appendSprite = [&](const SpriteRecord &s) {
         const auto geometry = spriteGeometry(s, camera->world);
         if (!geometry) {
             ++frame.stats.culledInstances;
-            continue;
+            return;
         }
         const auto &c = s.component;
         InstanceRecord instance{s.node,
@@ -98,9 +116,22 @@ PreparedFrame prepareFrame(const RenderSnapshot &snapshot, const RenderView &vie
                                 c.receiveShadow};
         instance.uvRect = geometry->uvRect;
         instance.tint = c.tint;
+        instance.colorOverlay = c.colorOverlay;
+        instance.outlineColor = c.outlineColor;
+        instance.effects = {c.outlineWidth, 0, 0, 0};
         instance.spriteSort = s.sort;
         instance.orderedSprite = c.transparency == SpriteTransparency::Sorted;
         spriteInstances.push_back(std::move(instance));
+    };
+    for (const auto &s : data.sprites)
+        appendSprite(s);
+    for (const auto &batch : data.batches) {
+        if (view.frustumCulling && !frame.shadows && !frustum.intersects(batch->bounds)) {
+            frame.stats.culledInstances += uint32_t(batch->sprites.size());
+            continue;
+        }
+        for (const auto &s : batch->sprites)
+            appendSprite(s);
     }
     std::vector<const InstanceRecord *> instances;
     instances.reserve(data.instances.size() + spriteInstances.size());
@@ -108,7 +139,7 @@ PreparedFrame prepareFrame(const RenderSnapshot &snapshot, const RenderView &vie
         instances.push_back(&i);
     for (const auto &i : spriteInstances)
         instances.push_back(&i);
-    const Frustum frustum(frame.uniforms.viewProjection);
+
     struct Item {
         const InstanceRecord *instance;
         uint32_t submesh;
@@ -220,7 +251,10 @@ PreparedFrame prepareFrame(const RenderSnapshot &snapshot, const RenderView &vie
                                        instance.normal,
                                        {instance.receiveShadow ? 1.0f : 0.0f, 0, 0, 0},
                                        instance.uvRect,
-                                       instance.tint});
+                                       instance.tint,
+                                       instance.colorOverlay,
+                                       instance.outlineColor,
+                                       instance.effects});
             if (!shadow)
                 frame.stats.triangles += submesh.indexCount / 3;
         }

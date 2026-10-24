@@ -5,6 +5,7 @@
 #ifndef RENDERER_INCLUDE_RENDERER_RENDER_SNAPSHOT_HPP_INCLUDED
 #define RENDERER_INCLUDE_RENDERER_RENDER_SNAPSHOT_HPP_INCLUDED
 #include "renderer/scene.hpp"
+#include "renderer/sprite_batch.hpp"
 #include "renderer/sprite_snapshot.hpp"
 #include <cstddef>
 #include <memory>
@@ -71,7 +72,7 @@ class RenderSnapshot {
     size_t cameraCount() const;
     /**
      * @brief 查询提取该快照时的场景版本。
-     * @return 保存的场景版本号；空快照为零。
+     * @return 保存的场景版本号；空快照为零，不包含附加 SpriteBatch 的版本变化。
      */
     uint64_t revision() const;
     /**
@@ -145,6 +146,14 @@ class RenderExtractor {
      * @return 共享不可变资源数据、可独立于源对象存活的快照。
      */
     RenderSnapshot extract(Scene &scene, const AssetStore &assets);
+    /** @brief 提取场景并共享附加批次；批次在视图准备时先做整体裁剪。
+     * @param scene 源场景，提供相机、灯光和普通节点。
+     * @param assets 解析普通节点资源的仓库。
+     * @param batches 已解析的不可变批次，可独立于本仓库存活。
+     * @return 保留批次旧版本及其资源的不可变快照。
+     */
+    RenderSnapshot extract(Scene &scene, const AssetStore &assets,
+                           std::span<const SpriteBatch> batches);
 
   private:
     /// 内部实现前置声明，公共头文件仅持有不透明指针。

@@ -3,6 +3,32 @@
 using namespace sprite_test;
 int main() {
     const std::vector<std::pair<const char *, std::function<void()>>> tests = {
+        {"batch IDs distinguish ordered transparency from opaque and OIT",
+         [] {
+             Fixture f;
+             auto opaqueDesc = f.assets.spriteDescription(f.first);
+             opaqueDesc.alphaMode = AlphaMode::Opaque;
+             const auto opaque = f.assets.createSprite(opaqueDesc);
+             std::vector<BatchSprite> data{
+                 {{.sprite = opaque}, Mat4::translation({0, 0, -2}), 10},
+                 {{.sprite = f.first, .transparency = SpriteTransparency::FollowView},
+                  Mat4::translation({0, 0, -1}),
+                  20},
+                 {{.sprite = f.first}, Mat4::identity(), 30}};
+             SpriteBatch batch;
+             batch.replace(f.assets, data);
+             RenderView view{.cameraNode = f.camera,
+                             .transparency = TransparencyMode::WeightedBlendedOIT};
+             SceneQuery all(f.extractor.extract(f.scene, f.assets, std::span{&batch, 1}), view, 200,
+                            200);
+             auto hit = all.pickSprite({100, 90});
+             require(hit && !hit->node && hit->instanceId == 30);
+             data.pop_back();
+             batch.replace(f.assets, data);
+             SceneQuery oit(f.extractor.extract(f.scene, f.assets, std::span{&batch, 1}), view, 200,
+                            200);
+             require(oit.pickSprite({100, 90})->instanceId == 20);
+         }},
         {"interaction filters never modify render data",
          [] {
              Fixture f;

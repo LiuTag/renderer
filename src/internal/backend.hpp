@@ -26,10 +26,14 @@ class Backend {
      */
     virtual ~Backend() = default;
     /**
-     * @brief 读取缓存的窗口像素尺寸。
+     * @brief 读取窗口像素尺寸或独立纹理目标尺寸。
      * @return 宽、高像素数。
      */
     virtual std::pair<int, int> framebufferSize() const = 0;
+    /** @brief 按设备限制更新独立纹理目标尺寸，窗口模式拒绝此操作。
+     * @param width 正像素宽。@param height 正像素高。@return 无。
+     */
+    virtual void resizeOffscreen(uint32_t width, uint32_t height) = 0;
     /**
      * @brief 上传帧数据并执行高层渲染流程。
      * @param frame 已经裁剪、排序、合批的帧数据。

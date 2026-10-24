@@ -2,7 +2,7 @@
 
 [文档导航](README.md) · [二次开发手册](DEVELOPMENT_GUIDE.md) · [SDK 安装](SDK.md)
 
-当前实现第一阶段的 2.5D 游戏表现基础：图片资源和图集、三种 Billboard、方向序列帧、落地点排序、部件排序组、屏幕射线与图片 Alpha 拾取。使用现有 Scene → RenderSnapshot → Renderer 链路，支持 OpenGL 4.5 Core 和 Vulkan 1.3。
+基础 Sprite 链路提供 2.5D 游戏表现：图片资源和图集、三种 Billboard、方向序列帧、落地点排序、部件排序组、屏幕射线与图片 Alpha 拾取。使用现有 Scene → RenderSnapshot → Renderer 链路，支持 OpenGL 4.5 Core 和 Vulkan 1.3。
 
 ## 运行森林示例
 
@@ -31,7 +31,7 @@ cmake --build --preset windows-release --parallel 6
 
 默认开启 FXAA，`--no-fxaa` 关闭；`--oit` 开启 OIT；`--threaded` 使用专用渲染线程。隐藏运行必须指定正的帧数。`--self-test` 使用固定时间步、自动行走和相机旋转，并检查动画事件、地面投影及场景数量；建议运行至少 24 帧。
 
-示例中的圆形障碍、移动和选择逻辑属于应用代码。当前没有通用物理引擎、导航寻路或完整游戏框架，点击障碍另一侧时角色可能停在障碍前。后续可接导航网格/A*，不需要改变图片组件。
+示例中的圆形障碍、移动和选择逻辑属于应用代码。新增 collision 模块提供通用圆/AABB 查询和连续圆形移动，但刚体动力学由独立的 [physics2d 模块](PHYSICS2D.md)提供，导航寻路和游戏框架仍由应用负责，点击障碍另一侧时角色可能停在障碍前。后续可接导航网格/A*，不需要改变图片组件。
 
 ## 1. 世界与图片分开
 
@@ -159,7 +159,7 @@ OIT 视图先合成 OIT 物体，再执行 `Ordered Sprites` Pass，绘制默认
 
 `SpriteDesc::unlit=false` 可使用现有场景光照，图片法线来自展开后的平面；当前 SpriteDesc 不提供独立法线贴图。默认关闭投影/接收阴影，可在组件开启。Opaque/Mask 可投影，Blend 不投影。阴影使用当前主相机已经展开的图片几何，不会再按灯光方向旋转，但相机旋转仍会改变这块纸片的几何阴影。
 
-森林示例使用固定在地面的柔和图片阴影。当前没有自动接触阴影、角色遮挡淡出、轮廓高亮、纸片骨骼或专用二维光照系统。
+森林示例使用固定在地面的柔和图片阴影。新增屏幕空间接触阴影、Blend 场景精灵遮挡淡出和 Alpha 内描边，接口与限制见[图片世界模块](WORLD_MODULES.md)；world 示例展示这些效果。纸片骨骼和专用二维光照系统尚未实现。
 
 ## 5. 方向序列帧动画
 
@@ -222,7 +222,7 @@ if (width > 0 && height > 0 && clientWidth > 0 && clientHeight > 0) {
 
 CPU 使用纹理第 0 级和 magFilter 的最近点/双线性规则检查 Alpha，不模拟实际 GPU mip/LOD/FXAA。Opaque 视为实心，Mask 通过阈值后视为实心；同一 OIT 队列没有确定层叠，拾取最近交点。当前只检查精灵，不检查普通网格的遮挡，也没有空间索引；每次拾取遍历当前缓存精灵。查询保有快照，可在只读线程使用，但返回的节点可能在可变场景中已经删除，操作前检查 valid。
 
-## 7. SDK 与下一阶段
+## 7. SDK 与图片世界模块
 
 Sprite、图集、Billboard、排序和只读 SpriteViewSnapshot 属于 `renderer::core`；动画和 SceneQuery 分别属于可选的 `renderer::animation`、`renderer::interaction`。头文件和静态库按启用模块安装；两个扩展只依赖核心公开接口，没有增加第三方依赖。开关、目录结构和接入迁移见 [模块说明](MODULES.md)。
 
@@ -236,4 +236,4 @@ ctest --test-dir build/development -C Release --output-on-failure
 .\build\development\Release\development_sprite.exe --threaded
 ```
 
-下一阶段可以增加地图分块/瓦片、导航、纸片骨骼和装备轨道、粒子、昼夜与局部光照、UI/中文字体、音频和存档。当前示例只是可交互的渲染验证场景，没有生存、制作、背包或 AI 玩法系统。
+地图分块/瓦片、[自动流式加载](STREAMING.md)、轻量碰撞、图片粒子、昼夜天气和遮挡/闪白/描边/接触阴影已通过[图片世界模块](WORLD_MODULES.md)提供，音频见[音乐与音效](AUDIO.md)。`renderer_world_demo` 展示这些模块协作。导航、纸片骨骼、UI/中文字体、存档和生存/制作/背包/AI 玩法仍需应用或后续模块实现。局部点光源/聚光灯已有，受光图片需设置 `SpriteDesc::unlit=false`。

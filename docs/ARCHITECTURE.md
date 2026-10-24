@@ -4,19 +4,25 @@
 
 ## 分层与数据流
 
-前端负责描述场景并生成与图形 API 无关的帧数据；RenderGraph 负责资源依赖与执行计划；RHI 后端负责设备操作。当前原生图形调用集中在 OpenGL RHI 实现，窗口层负责 GLFW。
+前端负责描述场景并生成与图形 API 无关的帧数据；RenderGraph 负责资源依赖与执行计划；RHI 后端负责设备操作。原生图形调用分别集中在 OpenGL/Vulkan RHI 实现，窗口层负责 GLFW。
 
 ```mermaid
 flowchart TD
     Scene[Scene 场景树与组件] --> Extract[RenderExtractor 快照提取]
     Assets[AssetStore 不可变资产] --> Extract
+    Batch[SpriteBatch 不可变批次] --> Extract
     Extract --> Snapshot[RenderSnapshot 不可变快照]
-    Snapshot --> Frame[prepareFrame 裁剪 / 排序 / 合批]
+    Snapshot --> Queue[当前线程 / 专用渲染线程队列]
+    Queue --> Frame[prepareFrame Billboard / 裁剪 / 排序 / 合批]
     Frame --> Pipeline[高层渲染管线]
     Pipeline --> Graph[RenderGraph 资源与 Pass]
     Graph --> Commands[RHI 命令列表]
     Commands --> GL[OpenGL Device]
-    GL --> GPU[GPU 与窗口输出]
+    Commands --> Vulkan[Vulkan Device]
+    GL --> GPU[GPU 最终颜色纹理]
+    Vulkan --> GPU
+    GPU --> Window[窗口呈现]
+    GPU --> Image[Image 回读 / PNG 保存]
     Shader[GLSL / SPIR-V / 资源反射] --> Pipeline
 ```
 
@@ -25,6 +31,18 @@ flowchart TD
 `renderer::animation` 和 `renderer::interaction` 是独立可选的扩展静态库，各自只依赖 core 公共接口；core/opengl 不反向链接扩展。交互模块通过共享不可变 PImpl 的 SpriteViewSnapshot 获取公开的视图几何、排序和纹理描述，不能读取私有快照结构。拾取筛选数据由 SceneQueryFilter 保存，渲染组件不保存 pickable。目录、安装和接入约定见[模块说明](MODULES.md)。
 
 `renderer::audio` 同样是独立可选扩展，仅使用 core 的公共数学及句柄类型。miniaudio 隐藏在 PImpl 实现中，设备混音使用独立音频时钟，流式任务后台补页；应用线程负责控制、回收及取得结束事件。渲染、动画和音频之间通过应用传递位置及玩法事件，详见[音频说明](AUDIO.md)。
+
+九个可选扩展为 animation、interaction、audio、tilemap、collision、particles、environment、presentation 和 physics2d；它们之间没有强制链接依赖，core 与图形后端不反向依赖扩展。物理和流式任务完成后由应用消费结果，再更新场景、批次和视图。
+
+## 应用更新与一帧流程
+
+1. 有窗口时在创建线程处理输入；应用推进固定步物理、动画、地图流式发布、粒子及昼夜天气。音频按独立混音时钟工作。
+2. 物理位置同步到 Scene，地图和粒子发布 SpriteBatch，环境模块更新灯光/RenderView。需要遮挡淡出时先提取几何快照，调用 presentation 后再提取最终快照。
+3. RenderExtractor 更新派生变换并生成不可变快照；提交后应用可以继续更新原场景。renderThread 开启时，帧准备和设备操作在专用线程执行。
+4. prepareFrame 选择相机与灯光、展开 Billboard、裁剪、排序并形成实例批次。后端复用帧槽和 GPU 缓存，执行共用渲染图。
+5. 窗口模式调用 Renderer::present() 呈现；离屏模式可用 renderToImage() 同步取得本快照的 Image，再保存 PNG。
+
+Renderer 不自动推进扩展系统；模块调度和玩法事件由应用负责。渲染队列、物理内部任务、地图后台 I/O 和音频混音是分别管理的执行路径。
 
 ## PImpl 与所有权
 
@@ -54,6 +72,10 @@ flowchart TD
 
 提取器在应用线程解析资产句柄，复制世界变换/相机/灯光，建立独立的不可变快照。法线逆转置矩阵及世界 AABB 根据节点完整句柄、网格身份和世界版本缓存。切换场景清空缓存，消失节点的缓存会被清理；不可逆变换的网格实例跳过提取。
 
+节点变换由 Scene 管理，NodeHandle 只保存身份。setLocalTransform() 修改相对父节点的局部矩阵并增加版本，世界矩阵按 parentWorld * local 派生；模型、图片、相机、灯光和分组节点共享此规则。移动刚体主要更新变换，网格和纹理继续复用。序列帧动画改变 Sprite 选择，淡出/闪白改变实例颜色参数，Billboard 最终矩阵则随视图计算。
+
+当前 CPU 按版本复用未变化的派生矩阵及包围盒计算，但后端每帧仍上传该帧需要的完整实例数组，也包含静态实例；尚未实现只上传变化矩阵的增量 GPU 路径。修改场景后需要重新提取快照，已有快照保持原内容。
+
 ## 视图准备与合批
 
 精灵快照额外保留不可变 Sprite 资源、逻辑世界矩阵、表现组件和最外层排序组。资源共享四边形及按纹理/Alpha/unlit 缓存的材质。每个视图在 `src/sprite.cpp` 展开 Billboard 几何、UV 与裁剪偏移，随后进行实际 AABB 裁剪；不会回写 Scene。GPU 实例新增 UV 矩形与线性 tint，网格默认使用完整 UV 和白色。
@@ -73,6 +95,8 @@ glslang 将 Vulkan 语义的 GLSL 450 编译为 SPIR-V 1.5；SPIRV-Cross 提供�
 RHI Pipeline 按逻辑 `(group,binding)` 合并阶段反射并验证兼容性，然后在 UBO、SSBO、采样纹理、Storage Image 四类 OpenGL 命名空间中分别紧凑分配绑定点。逻辑组号不直接等于 OpenGL 物理绑定点。
 
 Vulkan 后端直接创建 SPIR-V ShaderModule，并将同一反射结果映射为 DescriptorSetLayout / PipelineLayout。两种后端共同使用 `src/backends/common/renderer_backend.cpp` 的帧流程，窗口平台位于 `src/platform`，原生设备实现分别位于 `src/backends/opengl` 和 `src/backends/vulkan`。Vulkan 的资源保活、范围屏障与交换链同步见 [Vulkan 专章](VULKAN.md)。
+
+高层管线也支持不关联 WindowState 的独立纹理目标。离屏尺寸独立于 DPI，图末尾导出最终纹理并省略 Present Pass；`renderToImage()` 将绘制/回读放进同一个队列任务。Vulkan 离屏初始化不访问 GLFW、不要求 surface/swapchain；Windows OpenGL 的上下文由 WGL pbuffer 管理，内部引导窗口在初始化结束前销毁，驱动仍可能使用隐藏 HWND。PNG 编码实现私有地编入 core，详见[离屏专章](OFFSCREEN.md)。
 
 内置着色器约定如下，定义位于 `src/backends/common/portable_shaders.hpp`：
 
@@ -106,7 +130,11 @@ ShaderCompiler 以预处理源码及阶段缓存产物，宏和 include 内容�
 ## 内置渲染链路
 
 ```text
-Shadow -> Opaque PBR -> Transparent -> ToneMap -> Present
+Shadow -> Opaque PBR
+       -> Transparent，或 OIT Accumulation -> OIT Resolve
+       -> Ordered Sprites（OIT 下按需）
+       -> ToneMap / 接触阴影 / 调色 -> FXAA（可选）
+       -> 最终颜色纹理 -> 窗口呈现，或 Image 回读 / PNG 保存
 ```
 
 开启 `RenderView.transparency = WeightedBlendedOIT` 后，Transparent 替换为 `OIT Accumulation -> OIT Resolve`。RGBA32F 累积加权预乘颜色，R32F 累积剩余透过率；两个附件采用独立混合状态，Resolve 加载并混合到原 HDR，再统一 ToneMap。默认排序模式不分配 OIT 目标，模式改变会重建渲染图。算法和成本见 [OIT 说明](OIT.md)。
@@ -118,13 +146,15 @@ Shadow -> Opaque PBR -> Transparent -> ToneMap -> Present
 | Shadow | 方向光 Depth32F，Alpha Mask 裁剪，光栅深度偏移 |
 | Opaque PBR | 清除并写入 RGBA16F HDR 和 Depth32F 场景深度 |
 | Transparent | 加载 HDR/深度，深度测试开启、深度写入关闭，线性混合 |
-| ToneMap | 曝光及 None/ACES/Reinhard；关闭 FXAA 写 sRGB 显示目标，开启时写显示编码的普通 RGBA8 中间目标 |
+| OIT Accumulation / Resolve | 替代普通透明 Pass，分别累积并近似合成；深度测试开启、深度写入关闭 |
+| Ordered Sprites（可选） | OIT 合成后按脚底/分组顺序绘制默认 Sorted 精灵，FollowView 精灵进入 OIT |
+| ToneMap | 屏幕空间接触阴影、曝光、None/ACES/Reinhard 及调色；关闭 FXAA 写 sRGB 显示目标，开启时写显示编码的普通 RGBA8 中间目标 |
 | FXAA（可选） | 感知空间边缘检测、端点搜索和亚像素重采样，写入最终 sRGB 目标 |
-| Present | 将显示纹理拷贝到窗口默认帧缓冲，交换缓冲由 Renderer::present() 完成 |
+| Present（仅窗口） | 将显示纹理交给后端呈现流程，Renderer::present() 完成交换/呈现；离屏图省略此 Pass |
 
 主方向光阴影结合光栅偏移、接收平面深度梯度修正和 3×3 PCF，防止 PCF 邻域偏移在斜面上产生自阴影条纹。GPU 测试比较同一视图的无遮挡接收面在开/关阴影时的输出，覆盖此问题。
 
-关闭阴影时仍保留图阶段，使用最小阴影目标且没有阴影批次。图在窗口尺寸、实际阴影目标尺寸、透明或抗锯齿模式改变时重建，其余帧复用。
+关闭阴影时仍保留图阶段，使用最小阴影目标且没有阴影批次。图在目标尺寸、实际阴影尺寸、透明/抗锯齿模式或是否存在保序精灵队列改变时重建，其余帧复用。
 
 数学约定统一为右手系、列向量、列主序、NDC 深度 [0,1]，默认 LESS、清除深度 1；OpenGL 设置对应的 clip control。颜色纹理先 sRGB 解码，HDR 内线性光照与混合，输出到 sRGB 附件时编码，呈现拷贝避免二次编码。
 
@@ -132,7 +162,7 @@ Shadow -> Opaque PBR -> Transparent -> ToneMap -> Present
 
 CommandEncoder 只录制 CPU 命令，各工作线程可独立录制；Device 所在线程验证并回放。图形/计算 Pipeline、绑定组、直接/间接绘制、dispatch、拷贝、屏障、时间戳和呈现拷贝均通过 RHI。GraphicsPipelineDesc 可用 colorBlends 指定逐附件混合因子，非空时必须与颜色附件等长；为空时兼容原有 BlendMode，绑定 Pipeline 时覆盖活动附件状态以避免模式切换泄漏。
 
-OpenGL 对着色器存储访问使用与后续用途对应的 memory barrier 位，同时处理存储写前的 WAR 依赖。常规附件与传输依赖使用相应 OpenGL 操作的顺序保证。RHI 屏障仍保留完整资源与范围语义，为未来后端使用。
+OpenGL 对着色器存储访问使用与后续用途对应的 memory barrier 位，同时处理存储写前的 WAR 依赖。常规附件与传输依赖使用相应 OpenGL 操作的顺序保证。RHI 屏障保留完整资源、范围与阶段语义，Vulkan 将其映射到 synchronization2。
 
 每次提交插入 Fence 并返回单调完成序号。销毁使句柄立即失效，原生对象在最后引用它的提交完成后释放；清理 VAO/FBO 引用避免驱动意外保留缓冲或纹理。纹理视图引用共享底层存储，独立句柄销毁不提前释放仍使用的存储。
 
@@ -164,3 +194,11 @@ Window 拥有事件分发器，WindowState 只保留它的弱引用。原生回�
 静态导入支持 glTF/GLB 和 OBJ/MTL。glTF 支持交错、归一化、稀疏 accessor，triangle/strip/fan、节点矩阵/TRS、透视/正交相机，以及 unlit、emissive-strength、punctual-light 扩展。OBJ 支持负索引、凹多边形耳切三角化和基础 MTL。动画、蒙皮、morph、压缩几何、非 TEXCOORD_0、纹理变换和高级 MTL 贴图选项不在当前范围，会明确报告；部分无限范围相机/灯光使用有限近似。
 
 Vulkan 后端已经实现，复用 Scene、Model、快照、帧准备、图编译、SPIR-V 和逻辑描述符组。两个后端共享 common 下的高层管线与内置 Shader；平台库共用窗口事件和全屏。Vulkan 使用动态渲染、描述符组、fence 和 synchronization2，具有独立表面/交换链和设备工厂。窗口创建时指定 GraphicsApi，后续渲染数据保持一致；具体能力、内存/布局策略及当前限制见 [Vulkan 说明](VULKAN.md)。
+
+## 批次与图片世界扩展
+
+核心新增共享不可变 PImpl 的 SpriteBatch，解析后持有 Sprite 资源引用；RenderExtractor 保留批次版本，RenderSnapshot 同时容纳节点记录和无节点的批量实例。Fixed 批次使用精确几何包围盒，Billboard 使用与相机朝向无关的保守界限；无方向光阴影时允许整块剔除，之后继续现有视图展开、逐实例裁剪、排序及 GPU 实例合批。实例身份通过公开 instanceId 返回。
+
+五个可选模块只调用 core 公共 API：tilemap 缓存脏块，collision 使用独立空间网格，particles 做固定步模拟并发布批次，environment 输出/应用灯光和调色，presentation 读取 SpriteViewSnapshot 并更新 Scene 精灵表现。核心和后端都不反向依赖这些模块。遮挡控制后需重新提取最终快照。
+
+精灵覆盖色与内描边进入共用实例属性，实例步长为 224 字节；ToneMap 同时读取 SceneDepth，按需执行接触阴影和通用调色，两个后端使用相同 Shader。具体参数和限制见[图片世界模块](WORLD_MODULES.md)。

@@ -4,6 +4,8 @@
 
 `renderer::vulkan` 实现 Vulkan 1.3 RHI、窗口表面与交换链，使用现有 Scene、AssetStore、RenderSnapshot、ShaderArtifact、CommandEncoder 和 RenderGraph。OpenGL/Vulkan 共用 `src/backends/common/renderer_backend.cpp` 的高层管线，PBR、阴影、排序 Alpha、Weighted OIT、FXAA、Sprite/Billboard 和实例化使用同一套前端数据与 Shader。
 
+通过 `Renderer::createVulkanOffscreen()` 或 `rhi::Device::createVulkanOffscreen()` 可以完全跳过 GLFW 初始化、窗口、表面和交换链。高层用 `renderToImage(...).savePng(...)` 取得实际渲染结果；无需 `present()`。普通窗口路径和离屏路径共用图形/计算实现，离屏选择设备时不要求呈现队列和 swapchain 扩展，详见[离屏渲染](OFFSCREEN.md)。
+
 ## 构建与运行
 
 默认 `RENDERER_BUILD_VULKAN=OFF`，保留原 OpenGL 默认构建，不要求所有使用者安装 Vulkan SDK。启用 Vulkan 的源码构建需要 Vulkan 1.3 或更新的开发头文件，可安装 LunarG Vulkan SDK；Windows 的 FindVulkan 会使用 `VULKAN_SDK`。正常运行及已安装 SDK 的二次开发不需要这些头文件，只需要支持相应功能的 Vulkan 驱动与系统 loader。

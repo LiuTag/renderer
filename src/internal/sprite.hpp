@@ -26,6 +26,7 @@ struct SpriteRecord {
     SpriteRenderer component;
     Mat4 world;
     SpriteSort sort;
+    uint64_t instanceId = 0;
 };
 struct SpriteGeometry {
     Mat4 world, normal;
@@ -36,5 +37,6 @@ struct SpriteGeometry {
 std::optional<SpriteGeometry> spriteGeometry(const SpriteRecord &record, const Mat4 &cameraWorld);
 Mat4 cameraProjection(const Camera &camera, uint32_t width, uint32_t height);
 bool spriteSortLess(const SpriteSort &a, float depthA, const SpriteSort &b, float depthB);
+void validateSprite(const SpriteRenderer &sprite);
 } // namespace renderer::detail
 #endif // RENDERER_SRC_INTERNAL_SPRITE_HPP_INCLUDED

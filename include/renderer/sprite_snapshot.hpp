@@ -23,6 +23,7 @@ struct SpriteViewItem {
     SpriteTransparency transparency = SpriteTransparency::Sorted;
     uint32_t layerMask = 0xFFFFFFFFu;
     std::shared_ptr<const TextureDesc> texture; ///< 复制该引用可独立保留纹理像素。
+    uint64_t instanceId = 0;                    ///< 批量精灵的应用身份；普通场景节点为 0。
 };
 /**
  * @brief 以共享不可变 PImpl 保存指定视图的精灵渲染数据，不包含动画或交互逻辑。

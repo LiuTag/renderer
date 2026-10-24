@@ -19,7 +19,8 @@ struct SpriteHit {
     NodeHandle node;
     Vec3 worldPosition;
     Vec2 textureUV;
-    float distance = 0; ///< 从近裁剪面射线原点到图片的距离。
+    float distance = 0;      ///< 从近裁剪面射线原点到图片的距离。
+    uint64_t instanceId = 0; ///< 批量精灵身份；此时 node 为空，应由应用解释身份。
 };
 /** @brief 由交互层拥有的筛选条件；渲染组件不保存是否可拾取等业务属性。 */
 struct SceneQueryFilter {

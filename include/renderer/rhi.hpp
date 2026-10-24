@@ -541,6 +541,16 @@ class Device {
      * @return 可移动的设备；不满足设备能力或初始化失败时抛出异常。
      */
     static Device createVulkan(Window &window, bool debug = true);
+    /** @brief 创建无应用窗口的 OpenGL 设备。
+     * @param debug 是否启用调试回调。
+     * @return 设备；目前仅 Windows WGL pbuffer，有短暂引导窗口，驱动可能保留内部隐藏 HWND。
+     */
+    static Device createOpenGLOffscreen(bool debug = true);
+    /** @brief 创建无窗口/表面/交换链的 Vulkan 设备。
+     * @param debug 是否启用可用校验层。
+     * @return 设备，可用普通纹理和 RenderGraph 渲染，不依赖显示服务。
+     */
+    static Device createVulkanOffscreen(bool debug = true);
     /**
      * @brief 释放本对象持有的状态与资源引用。
      * @return 无（析构函数）。

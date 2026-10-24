@@ -19,6 +19,10 @@ layout(std140,set=0,binding=0) uniform FrameData {
     vec4 shadowParameters;
     vec4 postParameters;
     vec4 counts;
+    mat4 inverseViewProjection;
+    vec4 colorMultiplySaturation;
+    vec4 colorAdd;
+    vec4 contactParameters;
 } frame;
 )";
 inline const std::string materialBlock = R"(
@@ -45,15 +49,23 @@ layout(location=7) in mat3 normalMatrix;
 layout(location=10) in vec4 flags;
 layout(location=11) in vec4 uvRect;
 layout(location=12) in vec4 tint;
+layout(location=13) in vec4 colorOverlay;
+layout(location=14) in vec4 outlineColor;
+layout(location=15) in vec4 effects;
 layout(location=0) out vec3 worldPosition;
 layout(location=1) out vec3 worldNormal;
 layout(location=2) out vec2 uv;
 layout(location=3) flat out vec4 instanceFlags;
 layout(location=4) flat out vec4 instanceTint;
+layout(location=5) flat out vec4 instanceOverlay;
+layout(location=6) flat out vec4 instanceOutline;
+layout(location=7) flat out vec4 instanceEffects;
+layout(location=8) flat out vec4 instanceRect;
 void main(){
     vec4 p=world*vec4(position,1);
     worldPosition=p.xyz;worldNormal=normalMatrix*normal;
     uv=texcoord*uvRect.zw+uvRect.xy;instanceFlags=flags;instanceTint=tint;
+    instanceOverlay=colorOverlay;instanceOutline=outlineColor;instanceEffects=effects;instanceRect=uvRect;
     gl_Position=)" +
            (shadow ? "frame.lightViewProjection" : "frame.viewProjection") + R"(*p;
 }
@@ -112,6 +124,18 @@ layout(location=1) in vec3 worldNormal;
 layout(location=2) in vec2 uv;
 layout(location=3) flat in vec4 instanceFlags;
 layout(location=4) flat in vec4 instanceTint;
+layout(location=5) flat in vec4 instanceOverlay;
+layout(location=6) flat in vec4 instanceOutline;
+layout(location=7) flat in vec4 instanceEffects;
+layout(location=8) flat in vec4 instanceRect;
+float spriteAlpha(vec2 p) {
+    vec2 lo=min(instanceRect.xy,instanceRect.xy+instanceRect.zw);
+    vec2 hi=max(instanceRect.xy,instanceRect.xy+instanceRect.zw);
+    if(any(lessThan(p,lo))||any(greaterThan(p,hi)))return 0;
+    vec2 halfTexel=0.5/vec2(textureSize(baseMap,0));
+    return texture(baseMap,clamp(p,lo+halfTexel,hi-halfTexel)).a;
+}
+
 const float PI=3.14159265359;
 vec3 safeNormalize(vec3 v){float len=dot(v,v);return len>1e-12?v*inversesqrt(len):vec3(0,1,0);}
 vec3 normalValue(){
@@ -137,6 +161,15 @@ float shadowValue(vec3 n,vec3 light){
 void main(){
     vec4 base=texture(baseMap,uv)*material.baseColor*instanceTint;
     if(material.misc.y>0.5&&material.misc.y<1.5&&base.a<material.factors.z)discard;
+    if(instanceEffects.x>0.0&&instanceOutline.a>0.0) {
+        vec2 pixel=vec2(instanceEffects.x)/vec2(textureSize(baseMap,0));
+        float neighbor=1;
+        for(int y=-1;y<=1;++y)for(int x=-1;x<=1;++x)
+            if(x!=0||y!=0)neighbor=min(neighbor,spriteAlpha(uv+vec2(x,y)*pixel));
+        float edge=smoothstep(0.05,0.5,base.a)*(1.0-smoothstep(0.05,0.5,neighbor));
+        base.rgb=mix(base.rgb,instanceOutline.rgb,edge*instanceOutline.a);
+    }
+    base.rgb=mix(base.rgb,instanceOverlay.rgb,instanceOverlay.a);
     vec3 emission=texture(emissiveMap,uv).rgb*material.emissive.rgb;
     if(material.misc.x>0.5){writeColor(vec4(base.rgb+emission,material.misc.y>1.5?base.a:1));return;}
     vec3 n=normalValue(),v=safeNormalize(frame.cameraPosition.xyz-worldPosition);
@@ -177,11 +210,36 @@ inline std::string postFragment(bool encodedOutput = false) {
     return std::string("#version 450\n#define ENCODE_OUTPUT ") + (encodedOutput ? "1\n" : "0\n") +
            frameBlock + R"(
 layout(set=2,binding=0) uniform sampler2D hdrImage;
+layout(set=2,binding=1) uniform sampler2D sceneDepth;
 layout(location=0) in vec2 uv;
 layout(location=0) out vec4 outputColor;
-void main(){vec3 color=texture(hdrImage,uv).rgb*frame.postParameters.x;
+vec3 worldAt(vec2 p,float depth){vec4 h=frame.inverseViewProjection*vec4(p*2-1,depth,1);return h.xyz/h.w;}
+float contactVisibility(){
+    if(frame.contactParameters.x<=0)return 1;
+    ivec2 extent=textureSize(sceneDepth,0);
+    float d=texelFetch(sceneDepth,clamp(ivec2(uv*extent),ivec2(0),extent-1),0).r;
+    if(d>=0.999999)return 1;
+    vec3 origin=worldAt(uv,d), towardLight=normalize(-frame.lightDirection.xyz);
+    int steps=int(frame.contactParameters.w);
+    for(int i=1;i<=steps;++i){
+        vec3 p=origin+towardLight*(frame.contactParameters.y*float(i)/float(steps));
+        vec4 clip=frame.viewProjection*vec4(p,1);
+        if(clip.w<=0)break;
+        vec3 ndc=clip.xyz/clip.w;vec2 sampleUV=ndc.xy*0.5+0.5;
+        if(any(lessThan(sampleUV,vec2(0)))||any(greaterThanEqual(sampleUV,vec2(1)))||ndc.z<0||ndc.z>1)break;
+        float sampled=texelFetch(sceneDepth,clamp(ivec2(sampleUV*extent),ivec2(0),extent-1),0).r;
+        if(sampled>=0.999999)continue;
+        float gap=length(p-frame.cameraPosition.xyz)-length(worldAt(sampleUV,sampled)-frame.cameraPosition.xyz);
+        if(ndc.z>sampled+0.00002&&gap>0.005&&gap<frame.contactParameters.z)
+            return 1-frame.contactParameters.x*(1-float(i)/float(steps+1));
+    }
+    return 1;
+}
+void main(){vec3 color=texture(hdrImage,uv).rgb*frame.postParameters.x*contactVisibility();
     if(frame.postParameters.y>0.5&&frame.postParameters.y<1.5)color=clamp((color*(2.51*color+0.03))/(color*(2.43*color+0.59)+0.14),0,1);
     else if(frame.postParameters.y>1.5)color=color/(1+color);
+    color=color*frame.colorMultiplySaturation.rgb+frame.colorAdd.rgb;
+    color=mix(vec3(dot(color,vec3(0.2126,0.7152,0.0722))),color,frame.colorMultiplySaturation.a);
 #if ENCODE_OUTPUT
     color=clamp(color,0,1);
     color=mix(12.92*color,1.055*pow(color,vec3(1.0/2.4))-0.055,

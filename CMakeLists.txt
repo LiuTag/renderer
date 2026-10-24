@@ -48,6 +48,12 @@ option(RENDERER_BUILD_VULKAN "Build the Vulkan 1.3 backend (requires Vulkan head
 option(RENDERER_BUILD_ANIMATION "Build the optional sprite animation module" ON)
 option(RENDERER_BUILD_INTERACTION "Build the optional scene interaction module" ON)
 option(RENDERER_BUILD_AUDIO "Build the optional miniaudio music and sound module" ON)
+option(RENDERER_BUILD_TILEMAP "Build the optional tilemap module" ON)
+option(RENDERER_BUILD_COLLISION "Build the optional collision module" ON)
+option(RENDERER_BUILD_PARTICLES "Build the optional particles module" ON)
+option(RENDERER_BUILD_ENVIRONMENT "Build the optional environment module" ON)
+option(RENDERER_BUILD_PRESENTATION "Build the optional presentation module" ON)
+option(RENDERER_BUILD_PHYSICS2D "Build the optional Box2D physics module" ON)
 option(RENDERER_GL_TESTS "Include OpenGL tests when RENDERER_BUILD_TESTS is enabled" OFF)
 option(RENDERER_VULKAN_TESTS "Include Vulkan GPU and presentation tests when tests are enabled" OFF)
 option(RENDERER_INSTALL_SDK "Install public headers, libraries and CMake package" ON)
@@ -56,7 +62,9 @@ add_library(renderer_core STATIC
     src/events.cpp
     src/math.cpp
     src/assets.cpp
+    src/image.cpp
     src/sprite.cpp
+    src/sprite_batch.cpp
     src/sprite_snapshot.cpp
     src/model.cpp
     src/scene.cpp
@@ -94,6 +102,13 @@ if(RENDERER_BUILD_AUDIO)
     add_subdirectory(modules/audio)
 endif()
 
+foreach(module IN ITEMS tilemap collision particles environment presentation physics2d)
+    string(TOUPPER "${module}" module_upper)
+    if(RENDERER_BUILD_${module_upper})
+        add_subdirectory(modules/${module})
+    endif()
+endforeach()
+
 if(RENDERER_BUILD_OPENGL OR RENDERER_BUILD_VULKAN)
     include(FetchContent)
     set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
@@ -124,10 +139,13 @@ if(RENDERER_BUILD_OPENGL)
     set_target_properties(renderer_glad PROPERTIES FOLDER "core")
     target_include_directories(renderer_glad SYSTEM PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/third_party/glad/include>)
-    add_library(renderer_opengl STATIC src/backends/opengl/renderer_backend.cpp src/backends/opengl/rhi_device.cpp)
+    add_library(renderer_opengl STATIC src/backends/opengl/renderer_backend.cpp src/backends/opengl/rhi_device.cpp src/backends/opengl/offscreen_context.cpp)
     add_library(renderer::opengl ALIAS renderer_opengl)
     set_target_properties(renderer_opengl PROPERTIES EXPORT_NAME opengl FOLDER "core")
     target_link_libraries(renderer_opengl PUBLIC renderer_core PRIVATE renderer_pipeline renderer_platform glfw renderer_glad)
+    if(WIN32)
+        target_link_libraries(renderer_opengl PRIVATE opengl32 gdi32 user32)
+    endif()
     target_compile_definitions(renderer_opengl PRIVATE GLFW_INCLUDE_NONE)
     renderer_warnings(renderer_opengl)
 
@@ -162,7 +180,7 @@ endif()
 if(RENDERER_INSTALL_SDK)
     # 静态库的私有链接依赖仍需随 SDK 提供，使用内部名称避免污染使用者命名空间。
     set(renderer_sdk_targets renderer_core)
-    foreach(module IN ITEMS animation interaction audio)
+    foreach(module IN ITEMS animation interaction audio tilemap collision particles environment presentation physics2d)
         if(TARGET renderer_${module})
             list(APPEND renderer_sdk_targets renderer_${module})
             install(DIRECTORY modules/${module}/include/renderer DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
@@ -171,6 +189,9 @@ if(RENDERER_INSTALL_SDK)
     endforeach()
     set(renderer_sdk_dependencies glslang SPIRV glslang-default-resource-limits
         spirv-cross-glsl spirv-cross-core)
+    if(RENDERER_BUILD_PHYSICS2D)
+        list(APPEND renderer_sdk_dependencies box2d)
+    endif()
     if(RENDERER_BUILD_OPENGL OR RENDERER_BUILD_VULKAN)
         list(APPEND renderer_sdk_dependencies renderer_platform renderer_pipeline glfw)
     endif()
@@ -208,7 +229,8 @@ if(RENDERER_INSTALL_SDK)
     install(FILES ${CMAKE_CURRENT_BINARY_DIR}/rendererConfig.cmake
         ${CMAKE_CURRENT_BINARY_DIR}/rendererConfigVersion.cmake
         DESTINATION ${renderer_package_dir})
-    install(FILES README.md IMPLEMENTATION.md THIRD_PARTY.md DESTINATION ${CMAKE_INSTALL_DATADIR}/renderer)
+    install(FILES README.md IMPLEMENTATION.md THIRD_PARTY.md CHANGELOG.md
+        DESTINATION ${CMAKE_INSTALL_DATADIR}/renderer)
     install(DIRECTORY docs/ DESTINATION ${CMAKE_INSTALL_DATADIR}/renderer/docs
         FILES_MATCHING PATTERN "*.md")
     install(DIRECTORY examples/ DESTINATION ${CMAKE_INSTALL_DATADIR}/renderer/examples

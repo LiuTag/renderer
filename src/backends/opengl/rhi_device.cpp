@@ -1,6 +1,7 @@
 #include "../../internal/pool.hpp"
 #include "../../internal/rhi_backend.hpp"
 #include "../../internal/window.hpp"
+#include "offscreen_context.hpp"
 #include "renderer/rhi.hpp"
 #include "renderer/window.hpp"
 #include <algorithm>
@@ -8,6 +9,7 @@
 #include <cmath>
 #include <cstring>
 #include <deque>
+#include <functional>
 #include <glad/gl.h>
 #include <iostream>
 #include <map>
@@ -180,12 +182,17 @@ struct Fbo {
 } // namespace
 struct OpenGLDevice final : detail::DeviceBackend {
     std::shared_ptr<renderer::detail::WindowState> window;
-    // 成员按声明的逆序析构；资源池先清空，再解绑上下文，最后释放窗口。
+    std::unique_ptr<renderer::detail::OffscreenGLContext> offscreen;
+    // 资源池先析构，再解绑上下文，最后释放窗口或 pbuffer。
     struct Detach {
-        bool enabled = false;
+        std::function<void()> release;
         ~Detach() {
-            if (enabled)
-                glfwMakeContextCurrent(nullptr);
+            if (release) {
+                try {
+                    release();
+                } catch (...) {
+                } // 析构不能因驱动解绑失败而抛出。
+            }
         }
     } detach;
     std::thread::id thread = std::this_thread::get_id();
@@ -214,9 +221,11 @@ struct OpenGLDevice final : detail::DeviceBackend {
             throw std::logic_error("Window already has a graphics device");
         window->rendererAttached = true;
     }
+    explicit OpenGLDevice(bool debug)
+        : offscreen(std::make_unique<renderer::detail::OffscreenGLContext>(debug)) {}
     ~OpenGLDevice() override {
         if (loaded) {
-            glfwMakeContextCurrent(window->native);
+            current();
             glFinish();
             glDebugMessageCallback(nullptr, nullptr);
             for (auto [serial, f] : fences) {
@@ -226,7 +235,8 @@ struct OpenGLDevice final : detail::DeviceBackend {
             framebuffers.clear();
             retired.clear();
         }
-        window->rendererAttached = false;
+        if (window)
+            window->rendererAttached = false;
     }
     void check() const {
         if (std::this_thread::get_id() != thread)
@@ -234,7 +244,10 @@ struct OpenGLDevice final : detail::DeviceBackend {
     }
     void current() const {
         check();
-        glfwMakeContextCurrent(window->native);
+        if (window)
+            glfwMakeContextCurrent(window->native);
+        else
+            offscreen->makeCurrent();
     }
     static void GLAD_API_PTR debug(GLenum, GLenum type, GLuint, GLenum severity, GLsizei,
                                    const GLchar *text, const void *user) {
@@ -247,12 +260,20 @@ struct OpenGLDevice final : detail::DeviceBackend {
         current();
         static std::once_flag loader;
         static bool ready = false;
-        std::call_once(loader,
-                       [] { ready = gladLoadGL(glfwGetProcAddress) != 0 && GLAD_GL_VERSION_4_5; });
+        std::call_once(loader, [this] {
+            ready = gladLoadGL(window ? glfwGetProcAddress
+                                      : renderer::detail::OffscreenGLContext::getProc) != 0 &&
+                    GLAD_GL_VERSION_4_5;
+        });
         if (!ready)
             throw std::runtime_error("OpenGL 4.5 required");
         loaded = true;
-        detach.enabled = true;
+        detach.release = [this] {
+            if (window)
+                glfwMakeContextCurrent(nullptr);
+            else
+                offscreen->releaseCurrent();
+        };
         caps.backend = "OpenGL";
         caps.vendor = reinterpret_cast<const char *>(glGetString(GL_VENDOR));
         caps.device = reinterpret_cast<const char *>(glGetString(GL_RENDERER));
@@ -760,14 +781,19 @@ struct OpenGLDevice final : detail::DeviceBackend {
     }
     void releaseContext() override {
         check();
-        glfwMakeContextCurrent(nullptr);
+        if (window)
+            glfwMakeContextCurrent(nullptr);
+        else
+            offscreen->releaseCurrent();
     }
     void acquireContext() override {
         thread = std::this_thread::get_id();
-        glfwMakeContextCurrent(window->native);
+        current();
     }
     void swap() override {
         current();
+        if (!window)
+            throw std::logic_error("An offscreen device has no window to present");
         glfwSwapBuffers(window->native);
     }
     std::shared_ptr<renderer::detail::WindowState> windowState() const override {
@@ -1215,6 +1241,8 @@ CompletionToken OpenGLDevice::submit(const std::vector<detail::Command> &command
                         q.native->lastUse = serial;
                         glQueryCounter(q.native->queries[c.index], GL_TIMESTAMP);
                     } else if constexpr (std::is_same_v<T, detail::Present>) {
+                        if (!window)
+                            throw std::logic_error("An offscreen device cannot present");
                         RenderingDesc desc;
                         desc.colors.push_back({c.texture, LoadOp::Load});
                         auto &source = framebuffer(desc, serial);
@@ -1256,6 +1284,13 @@ CompletionToken OpenGLDevice::submit(const std::vector<detail::Command> &command
 }
 Device Device::createOpenGL(Window &window, bool debug) {
     auto backend = std::make_unique<OpenGLDevice>(renderer::detail::WindowAccess::state(window));
+    backend->init(debug);
+    auto impl = std::make_unique<Impl>();
+    impl->backend = std::move(backend);
+    return Device(std::move(impl));
+}
+Device Device::createOpenGLOffscreen(bool debug) {
+    auto backend = std::make_unique<OpenGLDevice>(debug);
     backend->init(debug);
     auto impl = std::make_unique<Impl>();
     impl->backend = std::move(backend);

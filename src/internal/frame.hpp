@@ -21,6 +21,8 @@ struct alignas(16) FrameUniforms {
     Vec4 shadowParameters;
     Vec4 postParameters;
     Vec4 counts;
+    Mat4 inverseViewProjection;
+    Vec4 colorMultiplySaturation{1, 1, 1, 1}, colorAdd{}, contactParameters{};
 };
 /**
  * @brief 上传给 GPU 的世界矩阵、法线矩阵及实例标记。
@@ -29,8 +31,9 @@ struct InstanceGpu {
     Mat4 world, normal;
     Vec4 flags{1, 0, 0, 0};
     Vec4 uvRect{0, 0, 1, 1}, tint{1, 1, 1, 1};
+    Vec4 colorOverlay{}, outlineColor{}, effects{};
 };
-static_assert(sizeof(InstanceGpu) == 176 && offsetof(InstanceGpu, flags) == 128 &&
+static_assert(sizeof(InstanceGpu) == 224 && offsetof(InstanceGpu, flags) == 128 &&
               offsetof(InstanceGpu, uvRect) == 144 && offsetof(InstanceGpu, tint) == 160);
 /**
  * @brief 上传给 GPU 的位置/类型、方向/范围、颜色/强度和聚光参数。
