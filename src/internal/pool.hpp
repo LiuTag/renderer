@@ -58,6 +58,14 @@ template <class T, class Tag> class Pool {
      * @return 无；此接口已删除。
      */
     Pool &operator=(const Pool &other) = delete;
+    uint64_t owner() const {
+        return owner_;
+    }
+    template <class F> void forEach(F &&f) const {
+        for (const auto &slot : slots_)
+            if (slot.value)
+                f(*slot.value);
+    }
     /**
      * @brief 在空闲或新增槽位构造资源。
      * @tparam Args T 构造参数的类型列表。

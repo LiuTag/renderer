@@ -1,0 +1,16 @@
+<rml><head><title>Forest camp HUD</title><link type="text/rcss" href="../ui/theme.rcss"/><style>
+body {font-size:14dp;}
+#hud {left:10dp;top:10dp;width:180dp;}
+#settings {right:10dp;top:10dp;width:160dp;}
+#actions {left:10dp;bottom:10dp;width:230dp;}
+.title {font-size:18dp;} progress {width:170dp;} input.range {width:150dp;}
+button {padding:5dp 8dp;} .muted {font-size:12dp;}
+</style></head><body>
+<div class="panel" id="hud"><div class="title">Forest Camp</div><div id="status">Exploring</div><progress id="health" value="0.86"/><div class="muted row" id="resources">Collected: 0</div></div>
+<div class="panel" id="settings"><div class="title">Settings</div>
+<div class="row"><input class="checkbox" id="music" type="checkbox" checked="checked"/> Music</div>
+<div class="row"><input class="checkbox" id="fxaa" type="checkbox" checked="checked"/> FXAA</div>
+<div class="row"><input class="checkbox" id="oit" type="checkbox"/> OIT</div>
+<div class="muted">Master volume</div><input class="range" id="volume" type="range" min="0" max="100" value="45"/>
+</div><div class="panel" id="actions"><button id="pause">Pause</button><button id="hit">Strike</button><button id="weather">Weather</button><div class="muted">WASD move / Q Z orbit / wheel zoom</div></div>
+</body></rml>

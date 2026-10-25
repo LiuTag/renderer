@@ -2,9 +2,11 @@
 
 [返回文档导航](README.md) · [完整二次开发手册](DEVELOPMENT_GUIDE.md)
 
-SDK 安装公共头文件、核心静态库、可选 OpenGL/Vulkan 后端及九个扩展静态库及完整链接依赖，并提供 `find_package(renderer CONFIG)` 配置。使用者不需要访问引擎源码、下载依赖或安装 Vulkan SDK。运行图形功能需要相应的 OpenGL 4.5 Core 或 Vulkan 1.3 驱动；窗口呈现需要显示环境，Vulkan 离屏不需要。
+SDK 安装公共头文件、核心静态库、可选 OpenGL/Vulkan 后端及十二个扩展静态库及完整链接依赖，并提供 `find_package(renderer CONFIG)` 配置。使用者不需要访问引擎源码、下载依赖或安装 Vulkan SDK。运行图形功能需要相应的 OpenGL 4.5 Core 或 Vulkan 1.3 驱动；窗口呈现需要显示环境，Vulkan 离屏不需要。
 
 [离屏渲染](OFFSCREEN.md)使用同一套后端目标，无额外模块。PNG 编码随 core 静态提供，不导出 stb 头文件或额外 PNG/zlib 库；Windows OpenGL 的 WGL pbuffer 系统库由 CMake 自动传递。安装包包含 `share/renderer/examples/offscreen` 和共用图集，可独立构建并直接输出 PNG。
+
+完整 SDK 还安装 [game 综合应用](../examples/game/README.md)，需十二个扩展和至少一个后端。可单独配置 `share/renderer/examples/game`，无需访问引擎私有头文件或下载素材；应用调度、音频缓存、流式物件、实际 PNG/WAV 输出均有源码。
 
 ## 构建并安装到指定目录
 
@@ -43,7 +45,7 @@ cmake --build build/windows --config Release --target INSTALL --parallel 6
 旧构建目录可能仍缓存 `C:/Program Files/renderer`，不会因默认值修改而自动迁移。若 INSTALL 报 `file INSTALL cannot make directory`、访问拒绝或最后显示 `MSB3073`，先检查输出中最早的 CMake 错误及目标路径。可从源码根目录修改旧缓存，再在 VS 中重新加载生成的解决方案：
 
 ```powershell
-cmake --preset windows -DCMAKE_INSTALL_PREFIX=C:/projects/chatgpt/renderer/build/windows/sdk
+cmake --preset windows -DCMAKE_INSTALL_PREFIX=C:/SDK/renderer
 ```
 
 路径按实际工程位置调整。`cmake --install ... --prefix ...` 只覆盖当次命令，不会修改 VS INSTALL 使用的缓存前缀；需要固定 VS 的安装位置时使用配置阶段的 `-D` 参数。
@@ -71,15 +73,21 @@ C:/SDK/renderer/
 | `renderer::animation` | 可选方向序列帧、动画播放及事件，只依赖 core |
 | `renderer::interaction` | 可选屏幕射线、地面求交、Alpha 拾取及筛选，只依赖 core |
 | `renderer::audio` | 可选音乐/音效与混音，只依赖 core 公共类型；miniaudio 实现编入库内 |
-
 | `renderer::tilemap` | 稀疏瓦片地图、脏块缓存、批次发布和后台流式加载 |
 | `renderer::collision` | XZ 圆/AABB 查询、连续圆形移动与滑动 |
 | `renderer::particles` | CPU 固定步图片粒子与火/烟/雨/雪预设 |
 | `renderer::environment` | 昼夜太阳、调色与天气强度 |
 | `renderer::presentation` | Scene 精灵遮挡淡出、闪白与恢复 |
 | `renderer::physics2d` | 可选 Box2D 刚体、形状、固定步、事件、查询、关节和场景同步 |
+| `renderer::camera` | 可选轨道/跟随/自由控制、平滑、限幅和相机节点写回，只依赖 core |
+| `renderer::ui` | 可选游戏控件、文档/皮肤、文字/图片、事件和覆盖层快照；私有 RmlUi/FreeType 自动传递 |
+| `renderer::text` | 世界文字、字体/排版/图集、节点绑定、Billboard、屏幕字号和深度开关；只需 core 与私有 FreeType |
 
-上述五个扩展各自只依赖 core。按需链接、线程契约和完整代码见[图片世界模块](WORLD_MODULES.md)。
+这些扩展各自只依赖 core 的公共接口。相机的输入单位、更新顺序和独立 SDK 示例见[相机控制](CAMERA.md)；地图、碰撞、粒子、环境和表现的接入见[图片世界模块](WORLD_MODULES.md)。
+
+ui 组件安装 renderer_ui、RmlUi 和 FreeType 三个静态库，以及 RmlUi/FreeType/示例字体许可证；不安装第三方开发头文件或它们的独立 CMake 包。示例字体位于 share/renderer/assets，由 renderer_UI_FONT 提供路径，文档/RCSS 皮肤随示例源码安装。应用可提供其他字体；完整接入和文字/IME 范围见[UI 文档](UI.md)。
+
+text 组件安装 renderer_text，FreeType 与 UI 共用同一个静态依赖，不要求 RmlUi 或 UI。renderer_TEXT_FONT 提供安装后的示例字体路径，单独构建 text 时也安装该字体与许可。字体/图集和世界节点的接口见[世界文字](TEXT.md)。
 
 ## 从外部工程接入
 
@@ -119,7 +127,7 @@ target_link_libraries(my_app PRIVATE renderer::vulkan)
 ## 仅安装核心 SDK
 
 ```powershell
-cmake -S . -B build/core -DRENDERER_BUILD_OPENGL=OFF -DRENDERER_BUILD_VULKAN=OFF -DRENDERER_BUILD_EXAMPLES=OFF -DRENDERER_BUILD_ANIMATION=OFF -DRENDERER_BUILD_INTERACTION=OFF -DRENDERER_BUILD_AUDIO=OFF -DRENDERER_BUILD_TILEMAP=OFF -DRENDERER_BUILD_COLLISION=OFF -DRENDERER_BUILD_PARTICLES=OFF -DRENDERER_BUILD_ENVIRONMENT=OFF -DRENDERER_BUILD_PRESENTATION=OFF -DRENDERER_BUILD_PHYSICS2D=OFF -DCMAKE_INSTALL_PREFIX=C:/SDK/renderer-core
+cmake -S . -B build/core -DRENDERER_BUILD_OPENGL=OFF -DRENDERER_BUILD_VULKAN=OFF -DRENDERER_BUILD_EXAMPLES=OFF -DRENDERER_BUILD_ANIMATION=OFF -DRENDERER_BUILD_INTERACTION=OFF -DRENDERER_BUILD_AUDIO=OFF -DRENDERER_BUILD_TILEMAP=OFF -DRENDERER_BUILD_COLLISION=OFF -DRENDERER_BUILD_PARTICLES=OFF -DRENDERER_BUILD_ENVIRONMENT=OFF -DRENDERER_BUILD_PRESENTATION=OFF -DRENDERER_BUILD_PHYSICS2D=OFF -DRENDERER_BUILD_CAMERA=OFF -DRENDERER_BUILD_UI=OFF -DRENDERER_BUILD_TEXT=OFF -DCMAKE_INSTALL_PREFIX=C:/SDK/renderer-core
 cmake --build build/core --config Debug --parallel 6
 cmake --install build/core --config Debug
 ```
@@ -164,4 +172,18 @@ SDK 中也包含此示例，默认位于 `share/renderer/examples/sdk_consumer`�
 
 流式接口 `<renderer/tilemap/streaming.hpp>` 随 tilemap 组件安装，后台线程和区块文件实现已包含在同一个 `renderer_tilemap` 库内。无需额外线程库配置或第三方头文件；core 已传递 Threads/C++20 要求。关闭 tilemap 同时关闭流式实现、头文件和测试。详情见[流式加载](STREAMING.md)。
 
-`renderer::physics2d` 随启用配置安装公共头文件和 renderer_physics2d 静态库；私有 Box2D 静态库自动传递。完整 SDK 每个配置新增两个库，共 22 个。上游独立安装被排除，不安装 Box2D 开发头文件或第二套包配置。组件、固定版本和应用契约见[Box2D 文档](PHYSICS2D.md)。
+`renderer::physics2d` 随启用配置安装公共头文件和 renderer_physics2d 静态库；私有 Box2D 静态库自动传递。完整 SDK 每个配置新增两个库，共 27 个。上游独立安装被排除，不安装 Box2D 开发头文件或第二套包配置。组件、固定版本和应用契约见[Box2D 文档](PHYSICS2D.md)。
+
+## 渲染基础增强 SDK
+
+AssetLoader、RenderTexture、材质效果和内存统计均随 core/后端安装，没有新增外部依赖。Windows 平台库的 IMM32/comctl32 系统链接依赖由导出目标自动传递。ui/text 仍为独立组件；features 示例要求两者，其他模块可关闭。新值类型/字段需要使用同版本头文件和库重新编译应用。详见[features SDK 示例](../examples/features/README.md)。
+
+## 压缩纹理、数组与文字增强
+
+核心安装 renderer/texture.hpp：DDS 读取/保存、CPU BC1/3/4/5 编码、BC1/2/3/4/5/7 解码、数组与离线 mip 无需额外组件。stb_dxt/bcdec 实现编入 renderer_core，第三方头文件不安装，许可原文随包保存；完整 SDK 仍是每配置 27 个静态库。高层数组、格式降级和 RHI 接口由已有两种后端提供。
+
+SDF、字形 LRU 与 trimCache 属于可选 text；共享 UI 字体缓存回收与数组图片选层属于 ui。更新头文件和静态库后需重新编译应用。详见[纹理说明](TEXTURES.md)和[文字说明](TEXT.md)。SDK 的 share/renderer/examples/texture_text 可独立构建打包器及对照示例；只有 core 的包也可构建 CPU 打包器。全部示例开启后为 23 个目标、40 项示例检查。
+
+## 性能优化接口与示例
+
+批量传输、区域/Alpha8 纹理、场景缓存和空间索引属于 core/RHI；字形 R8/局部图集更新属于 text。新头文件 renderer/texture_region.hpp 随核心安装，暂存池没有增加第三方依赖。完整 SDK 仍每配置 27 个静态库；更新后重新编译消费者。performance 示例需要 text/interaction 和任一后端，可独立配置，详见[示例](../examples/performance/README.md)与[优化说明](OPTIMIZATION.md)。

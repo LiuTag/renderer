@@ -8,6 +8,7 @@
 #include <filesystem>
 #include <functional>
 #include <memory>
+#include <string>
 #include <variant>
 #include <vector>
 
@@ -198,6 +199,20 @@ struct KeyEvent {
 struct TextInputEvent {
     char32_t codepoint = 0; // 已提交的 Unicode 码点，不包含输入法组合中的编辑状态。
 };
+/** @brief 输入法组合生命周期；光标使用 Unicode 字符偏移，Commit 内容不再重复发为 TextInputEvent。
+ */
+enum class CompositionPhase { Begin, Update, Commit, End };
+/** @brief 输入法预编辑或提交的 UTF-8 文本；End 取消尚未提交的预编辑。 */
+struct TextCompositionEvent {
+    CompositionPhase phase = CompositionPhase::Update;
+    std::string text;
+    uint32_t cursor = 0;
+};
+/** @brief 当前可编辑区域，使用客户区左上原点屏幕坐标；供候选窗定位和输入法启停。 */
+struct TextInputArea {
+    bool active = false;
+    float x = 0, y = 0, width = 0, height = 0;
+};
 /**
  * @brief 以客户区左上为原点、屏幕坐标单位的鼠标位置事件。
  */
@@ -286,7 +301,8 @@ using WindowEvent =
     std::variant<KeyEvent, TextInputEvent, MouseMoveEvent, MouseButtonEvent, MouseScrollEvent,
                  CursorEnterEvent, WindowMoveEvent, WindowResizeEvent, FramebufferResizeEvent,
                  WindowFocusEvent, WindowMinimizeEvent, WindowMaximizeEvent,
-                 WindowContentScaleEvent, WindowCloseEvent, WindowRefreshEvent, FileDropEvent>;
+                 WindowContentScaleEvent, WindowCloseEvent, WindowRefreshEvent, FileDropEvent,
+                 TextCompositionEvent>;
 /**
  * @brief 统一事件回调；event 是仅在本次调用期间有效的事件引用，回调无返回值。
  */

@@ -54,6 +54,7 @@ struct WindowState {
     GLFWmonitor *fullscreenMonitor = nullptr;
     GLFWvidmode desktopMode{};
     bool changingMode = false;
+    TextInputArea textInputArea;
     /**
      * @brief 在创建线程销毁原生窗口。
      * @return 无（析构函数）。
@@ -88,6 +89,9 @@ struct WindowState {
             dispatcher->recordError(std::move(error));
     }
 };
+void installTextInputHook(WindowState &state);
+void removeTextInputHook(WindowState &state);
+void updateTextInputArea(WindowState &state);
 /**
  * @brief 供图形后端读取公开窗口内部状态的友元桥。
  */

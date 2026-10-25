@@ -135,6 +135,9 @@ endif()
 | `RENDERER_BUILD_ANIMATION` | ON | 构建独立动画扩展，只依赖 core |
 | `RENDERER_BUILD_INTERACTION` | ON | 构建独立交互扩展，只依赖 core |
 | `RENDERER_BUILD_AUDIO` | ON | 构建独立 miniaudio 音频扩展，离线测试无需声卡 |
+| `RENDERER_BUILD_CAMERA` | ON | 构建独立相机控制模块和无窗口 CPU 示例 |
+| `RENDERER_BUILD_UI` | ON | 构建 RmlUi/FreeType 游戏 UI 模块及启用后端的 UI 示例 |
+| `RENDERER_BUILD_TEXT` | ON | 构建独立 FreeType 世界文字模块及启用后端的文字示例 |
 | `RENDERER_BUILD_EXAMPLES` | ON | 编译源码 examples 下全部可用示例，无需预先安装 SDK；自动跳过缺失模块的图形示例 |
 | `RENDERER_BUILD_TESTS` | ON | 测试总开关，控制 tests 下的测试程序和示例运行检查；OFF 时不编译或注册任何测试 |
 | `RENDERER_GL_TESTS` | OFF | 测试总开关开启时增加窗口/GPU 测试及图形示例检查，需要 OpenGL |

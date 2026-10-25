@@ -22,6 +22,8 @@ struct MeshData {
 struct TextureData {
     uint64_t id;
     TextureDesc description;
+    uint64_t parentId = 0;
+    TextureRegion dirty;
 };
 /**
  * @brief 保有已解析纹理引用和材质参数的不可变共享资源。
@@ -39,6 +41,9 @@ struct MaterialData {
  * @brief 供引擎内部解析资源仓库私有数据的友元桥。
  */
 struct AssetAccess {
+    static std::pair<uint64_t, uint64_t> stamp(const AssetStore &assets);
+    static std::shared_ptr<const TextureData> texture(const AssetStore &assets,
+                                                      TextureHandle texture);
     static std::shared_ptr<const SpriteData> sprite(const AssetStore &assets, SpriteHandle sprite);
     /**
      * @brief 解析并共享不可变网格数据。

@@ -1,5 +1,6 @@
 #include "../../internal/pool.hpp"
 #include "../../internal/rhi_backend.hpp"
+#include "../../internal/texture_format.hpp"
 #include "../../internal/window.hpp"
 #include "offscreen_context.hpp"
 #include "renderer/rhi.hpp"
@@ -28,6 +29,8 @@ void checked(const char *operation) {
 }
 GLenum format(Format f) {
     switch (f) {
+    case Format::R8:
+        return GL_R8;
     case Format::Rgba8:
         return GL_RGBA8;
     case Format::Rgba8Srgb:
@@ -40,6 +43,26 @@ GLenum format(Format f) {
         return GL_R32F;
     case Format::Depth32Float:
         return GL_DEPTH_COMPONENT32F;
+    case Format::Bc1:
+        return 0x83f1;
+    case Format::Bc1Srgb:
+        return 0x8c4d;
+    case Format::Bc2:
+        return 0x83f2;
+    case Format::Bc2Srgb:
+        return 0x8c4e;
+    case Format::Bc3:
+        return 0x83f3;
+    case Format::Bc3Srgb:
+        return 0x8c4f;
+    case Format::Bc4:
+        return GL_COMPRESSED_RED_RGTC1;
+    case Format::Bc5:
+        return GL_COMPRESSED_RG_RGTC2;
+    case Format::Bc7:
+        return GL_COMPRESSED_RGBA_BPTC_UNORM;
+    case Format::Bc7Srgb:
+        return GL_COMPRESSED_SRGB_ALPHA_BPTC_UNORM;
     }
     throw std::invalid_argument("Invalid format");
 }
@@ -110,7 +133,7 @@ struct Native {
     uint64_t lastUse = 0;
     std::vector<GLuint> queries;
     std::shared_ptr<Native> parent;
-    uint32_t baseMip = 0;
+    uint32_t baseMip = 0, baseLayer = 0;
     std::shared_ptr<std::vector<std::weak_ptr<Native>>> pipelines;
     std::map<uint32_t, GLuint> vertexSources;
     GLuint indexSource = 0;
@@ -181,6 +204,25 @@ struct Fbo {
 };
 } // namespace
 struct OpenGLDevice final : detail::DeviceBackend {
+    bool uploadBatch = false;
+    bool batchGpuWork = false;
+    void beginUploadBatch() override {
+        current();
+        if (uploadBatch)
+            throw std::logic_error("Nested upload batch");
+        uploadBatch = true;
+        batchGpuWork = false;
+    }
+    CompletionToken endUploadBatch() override {
+        current();
+        if (!uploadBatch)
+            throw std::logic_error("No upload batch");
+        uploadBatch = false;
+        if (!batchGpuWork)
+            return {};
+        ++uploadStats.submissions;
+        return submit({});
+    }
     std::shared_ptr<renderer::detail::WindowState> window;
     std::unique_ptr<renderer::detail::OffscreenGLContext> offscreen;
     // 资源池先析构，再解绑上下文，最后释放窗口或 pbuffer。
@@ -284,6 +326,7 @@ struct OpenGLDevice final : detail::DeviceBackend {
             return static_cast<uint32_t>(value);
         };
         caps.maxTextureSize = query(GL_MAX_TEXTURE_SIZE);
+        caps.maxTextureArrayLayers = query(GL_MAX_ARRAY_TEXTURE_LAYERS);
         caps.maxColorAttachments = query(GL_MAX_COLOR_ATTACHMENTS);
         caps.maxVertexAttributes = query(GL_MAX_VERTEX_ATTRIBS);
         caps.maxVertexStride = query(GL_MAX_VERTEX_ATTRIB_STRIDE);
@@ -311,10 +354,27 @@ struct OpenGLDevice final : detail::DeviceBackend {
         return caps;
     }
     FormatFeatures formatFeatures(Format f) const override {
+        if (f >= Format::Bc1 && f <= Format::Bc3Srgb) {
+            GLint n = 0;
+            glGetIntegerv(GL_NUM_EXTENSIONS, &n);
+            bool available = false;
+            for (GLint i = 0; i < n; ++i) {
+                const std::string name =
+                    reinterpret_cast<const char *>(glGetStringi(GL_EXTENSIONS, GLuint(i)));
+                if (name == "GL_EXT_texture_compression_s3tc" ||
+                    ((f == Format::Bc1 || f == Format::Bc1Srgb) &&
+                     name == "GL_EXT_texture_compression_dxt1"))
+                    available = true;
+            }
+            if (!available)
+                return {};
+        }
         current();
         GLint supported = 0, renderable = 0, store = 0;
         glGetInternalformativ(GL_TEXTURE_2D, format(f), GL_INTERNALFORMAT_SUPPORTED, 1, &supported);
         glGetInternalformativ(GL_TEXTURE_2D, format(f), GL_FRAMEBUFFER_RENDERABLE, 1, &renderable);
+        if (detail::compressed(f))
+            return {supported != 0, false, false, false};
         if (f != Format::Depth32Float && f != Format::Rgba8Srgb)
             glGetInternalformativ(GL_TEXTURE_2D, format(f), GL_SHADER_IMAGE_STORE, 1, &store);
         return {supported != 0, f != Format::Depth32Float && renderable != GL_NONE,
@@ -330,6 +390,8 @@ struct OpenGLDevice final : detail::DeviceBackend {
         if (d.size == 0 || d.size > static_cast<size_t>(std::numeric_limits<GLsizeiptr>::max()) ||
             initial.size() > d.size)
             throw std::invalid_argument("Invalid buffer size");
+        if (uploadBatch && !initial.empty())
+            batchGpuWork = true;
         auto n = std::make_shared<Native>(Native::Buffer);
         n->pipelines = registry;
         glCreateBuffers(1, &n->id);
@@ -354,34 +416,49 @@ struct OpenGLDevice final : detail::DeviceBackend {
     }
     TextureHandle createTexture(const TextureDesc &d) override {
         current();
-        if (!d.width || !d.height || d.width > caps.maxTextureSize ||
-            d.height > caps.maxTextureSize || !d.mipLevels ||
+        if (!d.layers || d.layers > caps.maxTextureArrayLayers || !d.width || !d.height ||
+            d.width > caps.maxTextureSize || d.height > caps.maxTextureSize || !d.mipLevels ||
             d.mipLevels >
                 1 + static_cast<uint32_t>(std::floor(std::log2(std::max(d.width, d.height)))))
             throw std::invalid_argument("Invalid texture dimensions/mips");
         auto n = std::make_shared<Native>(Native::Texture);
-        glCreateTextures(GL_TEXTURE_2D, 1, &n->id);
-        glTextureStorage2D(n->id, static_cast<GLsizei>(d.mipLevels), format(d.format),
-                           static_cast<GLsizei>(d.width), static_cast<GLsizei>(d.height));
+        if (!formatFeatures(d.format).sampled)
+            throw std::invalid_argument("Unsupported texture format");
+        glCreateTextures(detail::array(d) ? GL_TEXTURE_2D_ARRAY : GL_TEXTURE_2D, 1, &n->id);
+        if (detail::array(d))
+            glTextureStorage3D(n->id, GLsizei(d.mipLevels), format(d.format), GLsizei(d.width),
+                               GLsizei(d.height), GLsizei(d.layers));
+        else
+            glTextureStorage2D(n->id, GLsizei(d.mipLevels), format(d.format), GLsizei(d.width),
+                               GLsizei(d.height));
         label(GL_TEXTURE, n->id, d.name);
         checked("Texture creation");
         return textures.create(Texture{std::move(n), d});
     }
-    TextureHandle createTextureView(TextureHandle h, uint32_t first, uint32_t count) override {
+    TextureHandle createTextureView(TextureHandle h, uint32_t first, uint32_t count,
+                                    uint32_t firstLayer, uint32_t layerCount,
+                                    bool arrayView) override {
         current();
         auto &t = textures.get(h);
         if (!count || first >= t.desc.mipLevels || count > t.desc.mipLevels - first)
             throw std::invalid_argument("Invalid view mip range");
+        if (!layerCount)
+            layerCount = t.desc.layers - firstLayer;
+        if (firstLayer >= t.desc.layers || !layerCount || layerCount > t.desc.layers - firstLayer)
+            throw std::invalid_argument("Invalid texture view layer range");
         auto n = std::make_shared<Native>(Native::Texture);
         n->parent = t.native;
         n->baseMip = t.native->baseMip + first;
+        n->baseLayer = t.native->baseLayer + firstLayer;
         glGenTextures(1, &n->id);
-        glTextureView(n->id, GL_TEXTURE_2D, t.native->id, format(t.desc.format), first, count, 0,
-                      1);
+        glTextureView(n->id, (layerCount > 1 || arrayView) ? GL_TEXTURE_2D_ARRAY : GL_TEXTURE_2D,
+                      t.native->id, format(t.desc.format), first, count, firstLayer, layerCount);
         auto d = t.desc;
         d.width = std::max(1u, d.width >> first);
         d.height = std::max(1u, d.height >> first);
         d.mipLevels = count;
+        d.layers = layerCount;
+        d.arrayTexture = layerCount > 1 || arrayView;
         checked("Texture view creation");
         return textures.create(Texture{std::move(n), d});
     }
@@ -416,7 +493,8 @@ struct OpenGLDevice final : detail::DeviceBackend {
                 if (b.arraySize != 1)
                     throw std::invalid_argument("Descriptor arrays are outside this RHI profile");
                 auto [it, inserted] = bindings.emplace(std::pair{b.group, b.binding}, b);
-                if (!inserted && (it->second.kind != b.kind || it->second.byteSize != b.byteSize))
+                if (!inserted && (it->second.kind != b.kind || it->second.byteSize != b.byteSize ||
+                                  it->second.textureArray != b.textureArray))
                     throw std::invalid_argument("Shader binding layouts disagree between stages");
             }
         uint32_t counts[4]{};
@@ -579,7 +657,8 @@ struct OpenGLDevice final : detail::DeviceBackend {
             if (b.kind == BindingKind::SampledTexture)
                 samplers.get(b.sampler);
             else if (texture.desc.format == Format::Depth32Float ||
-                     texture.desc.format == Format::Rgba8Srgb)
+                     texture.desc.format == Format::Rgba8Srgb ||
+                     detail::compressed(texture.desc.format))
                 throw std::invalid_argument("Unsupported storage image format");
         }
     }
@@ -654,27 +733,86 @@ struct OpenGLDevice final : detail::DeviceBackend {
                 throw std::logic_error("Upload buffer is in flight; wait before overwriting it");
             std::memcpy(static_cast<std::byte *>(b.native->mapping) + offset, bytes.data(),
                         bytes.size());
-        } else
+        } else {
+            batchGpuWork = true;
             glNamedBufferSubData(b.native->id, static_cast<GLintptr>(offset),
                                  static_cast<GLsizeiptr>(bytes.size()), bytes.data());
+        }
         checked("Buffer upload");
+        ++uploadStats.calls;
+        uploadStats.bytes += bytes.size();
     }
-    void upload(TextureHandle h, std::span<const uint8_t> pixels, uint32_t mip) override {
+    void upload(TextureHandle h, std::span<const uint8_t> pixels, uint32_t mip,
+                uint32_t layer) override {
         current();
         auto &t = textures.get(h);
-        if (mip >= t.desc.mipLevels ||
-            (t.desc.format != Format::Rgba8 && t.desc.format != Format::Rgba8Srgb))
-            throw std::invalid_argument("RGBA8 upload needs an RGBA8 texture/mip");
+        if (mip >= t.desc.mipLevels || layer >= t.desc.layers ||
+            (!detail::compressed(t.desc.format) && t.desc.format != Format::R8 &&
+             t.desc.format != Format::Rgba8 && t.desc.format != Format::Rgba8Srgb))
+            throw std::invalid_argument("Invalid texture upload format/subresource");
         const auto w = std::max(1u, t.desc.width >> mip),
                    height = std::max(1u, t.desc.height >> mip);
-        if (pixels.size() != size_t{w} * height * 4)
-            throw std::invalid_argument("Image byte size mismatch");
-        glTextureSubImage2D(t.native->id, static_cast<GLint>(mip), 0, 0, static_cast<GLsizei>(w),
-                            static_cast<GLsizei>(height), GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+        if (pixels.size() != detail::imageBytes(t.desc.format, w, height))
+            throw std::invalid_argument("Texture upload byte size mismatch");
+        batchGpuWork = true;
+        glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+        if (detail::compressed(t.desc.format)) {
+            if (detail::array(t.desc))
+                glCompressedTextureSubImage3D(t.native->id, GLint(mip), 0, 0, GLint(layer),
+                                              GLsizei(w), GLsizei(height), 1, format(t.desc.format),
+                                              GLsizei(pixels.size()), pixels.data());
+            else
+                glCompressedTextureSubImage2D(t.native->id, GLint(mip), 0, 0, GLsizei(w),
+                                              GLsizei(height), format(t.desc.format),
+                                              GLsizei(pixels.size()), pixels.data());
+        } else if (detail::array(t.desc))
+            glTextureSubImage3D(t.native->id, GLint(mip), 0, 0, GLint(layer), GLsizei(w),
+                                GLsizei(height), 1, t.desc.format == Format::R8 ? GL_RED : GL_RGBA,
+                                GL_UNSIGNED_BYTE, pixels.data());
+        else
+            glTextureSubImage2D(t.native->id, GLint(mip), 0, 0, GLsizei(w), GLsizei(height),
+                                t.desc.format == Format::R8 ? GL_RED : GL_RGBA, GL_UNSIGNED_BYTE,
+                                pixels.data());
         checked("Texture upload");
+        ++uploadStats.calls;
+        uploadStats.bytes += pixels.size();
+    }
+    void copyTexture(TextureHandle a, TextureHandle b, const TextureCopy &r) override {
+        current();
+        batchGpuWork = true;
+        (void)submit({detail::CopyTexture{a, b, r}});
+    }
+    void uploadRegion(TextureHandle h, TextureRegion r, std::span<const uint8_t> pixels,
+                      uint32_t mip, uint32_t layer) override {
+        current();
+        auto &t = textures.get(h);
+        if ((t.desc.format != Format::R8 && t.desc.format != Format::Rgba8 &&
+             t.desc.format != Format::Rgba8Srgb) ||
+            mip >= t.desc.mipLevels || layer >= t.desc.layers || !r.width || !r.height)
+            throw std::invalid_argument("Invalid texture patch");
+        auto w = std::max(1u, t.desc.width >> mip), hgt = std::max(1u, t.desc.height >> mip);
+        range(w, r.x, r.width);
+        range(hgt, r.y, r.height);
+        if (pixels.size() != detail::imageBytes(t.desc.format, r.width, r.height))
+            throw std::invalid_argument("Texture patch length mismatch");
+        auto f = t.desc.format == Format::R8 ? GL_RED : GL_RGBA;
+        batchGpuWork = true;
+        glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+        if (detail::array(t.desc))
+            glTextureSubImage3D(t.native->id, GLint(mip), GLint(r.x), GLint(r.y), GLint(layer),
+                                GLsizei(r.width), GLsizei(r.height), 1, f, GL_UNSIGNED_BYTE,
+                                pixels.data());
+        else
+            glTextureSubImage2D(t.native->id, GLint(mip), GLint(r.x), GLint(r.y), GLsizei(r.width),
+                                GLsizei(r.height), f, GL_UNSIGNED_BYTE, pixels.data());
+        checked("Texture region upload");
+        ++uploadStats.calls;
+        uploadStats.bytes += pixels.size();
     }
     void generateMipmaps(TextureHandle h) override {
         current();
+        if (detail::compressed(textures.get(h).desc.format))
+            throw std::invalid_argument("Compressed textures require authored mip levels");
         glGenerateTextureMipmap(textures.get(h).native->id);
         checked("Mipmap generation");
     }
@@ -692,17 +830,20 @@ struct OpenGLDevice final : detail::DeviceBackend {
         checked("Buffer readback");
         return data;
     }
-    RgbaImage readTexture(TextureHandle h) override {
+    RgbaImage readTexture(TextureHandle h, uint32_t layer) override {
         current();
         auto &t = textures.get(h);
+        if (layer >= t.desc.layers)
+            throw std::invalid_argument("Readback array layer out of bounds");
         if (t.desc.format == Format::Depth32Float)
             throw std::invalid_argument("Color readback needs a color texture");
         const size_t bytes = size_t{t.desc.width} * t.desc.height * 4;
         if (bytes > static_cast<size_t>(std::numeric_limits<GLsizei>::max()))
             throw std::length_error("Readback too large");
         RgbaImage image{t.desc.width, t.desc.height, std::vector<uint8_t>(bytes)};
-        glGetTextureImage(t.native->id, 0, GL_RGBA, GL_UNSIGNED_BYTE, static_cast<GLsizei>(bytes),
-                          image.pixels.data());
+        glGetTextureSubImage(t.native->id, 0, 0, 0, GLint(layer), GLsizei(t.desc.width),
+                             GLsizei(t.desc.height), 1, GL_RGBA, GL_UNSIGNED_BYTE, GLsizei(bytes),
+                             image.pixels.data());
         for (size_t y = 0; y < t.desc.height / 2; ++y) {
             auto a = image.pixels.begin() + static_cast<ptrdiff_t>(y * t.desc.width * 4),
                  b = image.pixels.begin() +
@@ -805,6 +946,8 @@ struct OpenGLDevice final : detail::DeviceBackend {
         std::vector<TextureHandle> attachments;
         int width = 0, height = 0;
         auto append = [&](TextureHandle h, uint32_t mip) {
+            if (detail::array(textures.get(h).desc))
+                throw std::invalid_argument("Rendering requires a single-layer 2D view");
             auto &t = textures.get(h);
             if (mip >= t.desc.mipLevels)
                 throw std::invalid_argument("Attachment mip out of range");
@@ -888,6 +1031,8 @@ struct OpenGLDevice final : detail::DeviceBackend {
                 buffer.native->lastUse = serial;
             } else {
                 auto &t = textures.get(b.texture);
+                if (slot.binding.textureArray != detail::array(t.desc))
+                    throw std::invalid_argument("Shader texture dimension does not match view");
                 t.native->lastUse = serial;
                 if (b.kind == BindingKind::SampledTexture) {
                     auto &sampler = samplers.get(b.sampler);
@@ -896,7 +1041,8 @@ struct OpenGLDevice final : detail::DeviceBackend {
                     glBindSampler(slot.physical, sampler.native->id);
                 } else
                     glBindImageTexture(slot.physical, t.native->id, static_cast<GLint>(b.mipLevel),
-                                       GL_FALSE, 0, b.writable ? GL_READ_WRITE : GL_READ_ONLY,
+                                       detail::array(t.desc) ? GL_TRUE : GL_FALSE, 0,
+                                       b.writable ? GL_READ_WRITE : GL_READ_ONLY,
                                        format(t.desc.format));
             }
         }
@@ -1135,6 +1281,17 @@ CompletionToken OpenGLDevice::submit(const std::vector<detail::Command> &command
                         auto &source = textures.get(c.source);
                         auto &destination = textures.get(c.destination);
                         const auto &r = c.region;
+                        if (!r.width || !r.height || !r.layerCount ||
+                            r.sourceLayer >= source.desc.layers ||
+                            r.destinationLayer >= destination.desc.layers ||
+                            r.layerCount > source.desc.layers - r.sourceLayer ||
+                            r.layerCount > destination.desc.layers - r.destinationLayer)
+                            throw std::invalid_argument("Invalid texture copy layer range");
+                        if (detail::compressed(source.desc.format) &&
+                            (r.sourceX % 4 || r.sourceY % 4 || r.destinationX % 4 ||
+                             r.destinationY % 4))
+                            throw std::invalid_argument(
+                                "Compressed copies require block-aligned origins");
                         if (source.desc.format != destination.desc.format ||
                             r.sourceMip >= source.desc.mipLevels ||
                             r.destinationMip >= destination.desc.mipLevels)
@@ -1147,6 +1304,10 @@ CompletionToken OpenGLDevice::submit(const std::vector<detail::Command> &command
                         range(sh, r.sourceY, r.height);
                         range(dw, r.destinationX, r.width);
                         range(dh, r.destinationY, r.height);
+                        if (detail::compressed(source.desc.format) &&
+                            !detail::blockCopyExtent(r, sw, sh, dw, dh))
+                            throw std::invalid_argument(
+                                "Compressed copy extent must align or reach both image edges");
                         auto storage = [](auto native) {
                             while (native->parent && native->parent->kind == Native::Texture)
                                 native = native->parent;
@@ -1155,6 +1316,10 @@ CompletionToken OpenGLDevice::submit(const std::vector<detail::Command> &command
                         if (storage(source.native) == storage(destination.native) &&
                             source.native->baseMip + r.sourceMip ==
                                 destination.native->baseMip + r.destinationMip &&
+                            source.native->baseLayer + r.sourceLayer <
+                                destination.native->baseLayer + r.destinationLayer + r.layerCount &&
+                            destination.native->baseLayer + r.destinationLayer <
+                                source.native->baseLayer + r.sourceLayer + r.layerCount &&
                             r.sourceX < r.destinationX + r.width &&
                             r.destinationX < r.sourceX + r.width &&
                             r.sourceY < r.destinationY + r.height &&
@@ -1162,12 +1327,16 @@ CompletionToken OpenGLDevice::submit(const std::vector<detail::Command> &command
                             throw std::invalid_argument("Overlapping texture copy");
                         source.native->lastUse = destination.native->lastUse = serial;
                         glCopyImageSubData(
-                            source.native->id, GL_TEXTURE_2D, static_cast<GLint>(r.sourceMip),
-                            static_cast<GLint>(r.sourceX), static_cast<GLint>(r.sourceY), 0,
-                            destination.native->id, GL_TEXTURE_2D,
+                            source.native->id,
+                            detail::array(source.desc) ? GL_TEXTURE_2D_ARRAY : GL_TEXTURE_2D,
+                            static_cast<GLint>(r.sourceMip), static_cast<GLint>(r.sourceX),
+                            static_cast<GLint>(r.sourceY), GLint(r.sourceLayer),
+                            destination.native->id,
+                            detail::array(destination.desc) ? GL_TEXTURE_2D_ARRAY : GL_TEXTURE_2D,
                             static_cast<GLint>(r.destinationMip),
                             static_cast<GLint>(r.destinationX), static_cast<GLint>(r.destinationY),
-                            0, static_cast<GLsizei>(r.width), static_cast<GLsizei>(r.height), 1);
+                            GLint(r.destinationLayer), static_cast<GLsizei>(r.width),
+                            static_cast<GLsizei>(r.height), GLsizei(r.layerCount));
                     } else if constexpr (std::is_same_v<T, detail::Barriers>) {
                         GLbitfield bits = 0;
                         for (auto b : c.barriers) {

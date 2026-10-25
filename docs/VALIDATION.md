@@ -4,17 +4,23 @@
 
 ## 当前版本与环境
 
-记录日期：2026-10-24；当前 CMake/SDK 包版本为 0.2.0。完整配置开启 OpenGL、Vulkan、九个扩展、示例和两个后端的 GPU 检查。
+记录日期：2026-10-25；当前 CMake/SDK 包版本为 0.2.0。完整配置开启 OpenGL、Vulkan、十二个扩展、示例和两个后端的 GPU 检查。
 
 实测环境为 Windows、Visual Studio 2022 / MSVC 19.44、NVIDIA GeForce RTX 2080 Ti、驱动 610.62、OpenGL 4.5 Core；Vulkan 开发环境为 SDK 1.4.350.0，后端要求 Vulkan 1.3，并启用可用的 Khronos 验证层与同步校验。已安装 SDK 的示例验证不依赖 VULKAN_SDK 环境变量。其他操作系统及显卡尚未实机验证。
 
 | 配置或检查 | 当前结果 |
 | --- | --- |
-| 完整 Debug | 48 项 CTest 全部通过，包含 32 个测试本体和 16 项示例运行检查 |
-| 完整 Release | 15 个示例目标构建成功，48 项 CTest 全部通过 |
-| CPU 核心 | 关闭两个后端、九个扩展和示例后，6 项核心检查通过；PNG 编码无需图形设备 |
-| SDK 安装 | Debug/Release 每配置 22 个静态库，按组件安装头文件、依赖、许可证、文档和示例 |
-| 独立 SDK 示例 | 清除 VULKAN_SDK 后，聚合示例的 16 项 Release 检查全部通过；单独配置 offscreen 目录的双后端检查也通过 |
+| 完整 Debug | 93 项 CTest 全部通过，包含 53 个测试本体和 40 项示例运行检查 |
+| 完整 Release | 23 个示例目标构建成功，93 项 CTest 全部通过 |
+| CPU 核心 | 关闭两个后端、十二个扩展和示例后，10 项核心检查通过；PNG 编码无需图形设备 |
+| CPU 相机（此前） | 只启用 core + camera、关闭两个后端及示例，8 项检查通过；安装后的 camera 示例无需 Vulkan SDK/窗口，独立构建运行通过 |
+| CPU UI（此前） | 只启用 core + ui，8 项检查通过；从该精简 SDK 独立构建并生成 UI 几何成功，无需窗口/Vulkan SDK |
+| CPU 文字 | 只启用 core + text、关闭 UI 和两个后端，12 项检查通过；独立字体文件下载/安装，无需 RmlUi |
+| 文字 SDK | 精简 text SDK 无窗口生成字形批次通过；关闭 text 后不安装其头文件/库，REQUIRED COMPONENTS text 查询按预期失败 |
+| UI 组件与示例 | 关闭 UI 后不安装其头文件/库，REQUIRED 查询按预期失败；完整 SDK 的 UI 示例可独立配置并运行四种窗口/离屏组合 |
+| 关闭相机 | 精简 SDK 不含相机头文件/库；REQUIRED COMPONENTS camera 在配置时按预期失败 |
+| SDK 安装 | Debug/Release 每配置 27 个静态库，按组件安装头文件、依赖、许可证、文档和示例 |
+| 独立 SDK 示例 | 清除 VULKAN_SDK 后，聚合示例的 40 项 Release 检查全部通过；game 综合示例支持独立配置并运行四种后端/输出组合 |
 | 跨后端一致性 | 同一快照、两种线程模式、缩放及透明/FXAA 组合共 12 次比较；统计一致，本机测试场景中每次平均 RGB 色值差小于 0.0001，阈值外像素为零 |
 | 文件规范 | 自有 C++ 文件通过 clang-format；头文件采用唯一 include guard，公共接口包含中文用途、参数及返回值说明 |
 | 文档与依赖 | UTF-8、本地链接、固定第三方文件哈希/许可证和 VS core/modules/examples/tests 分组检查通过 |
@@ -24,6 +30,7 @@ CTests 数量随构建开关变化，以 `ctest -N` 的当前配置清单为准�
 功能回归重点如下：
 
 - 图片世界：不可变批次的旧版本/资源保留、Billboard 保守界限、负坐标瓦片、连续移动、图片粒子、昼夜、淡出/闪白/描边及接触阴影。world 示例覆盖双后端、流式地图和 Box2D；关闭 physics2d 后的 collision 回退路径也已验证。
+- 综合应用：十二模块真实联动，动画触发脚步音效、碰撞与传感器、推箱子及距离约束、拾取/地面投影、流式传送/编辑保存、昼夜/雨雪/配乐/环境声、暂停时独立混音及离屏尺寸调整。每项 240 帧实际生成 192,000 个立体声音频帧、PNG、WAV 和会话 JSON。
 - 流式加载：后台读取与主线程发布、距离优先与滞回、预算/容量背压、协作取消、Unicode 区块文件、损坏校验、编辑保存、保存期间再次编辑、失败保存不卸载，以及加载/卸载时的物件与碰撞生命周期。
 - Box2D：1/2 个内部工作线程、常用/复合形状、固定步与过载、力/冲量、接触/传感器/命中事件、查询过滤、距离关节、句柄代际、删除后的退出事件及父变换/插值同步。
 - 离屏输出：不初始化 GLFW 的独立进程，验证 RHI 纹理渲染、奇数尺寸、行序/显示编码、单线程/渲染线程一致性、排队帧、缩放、非法操作恢复、OIT/FXAA、GPU 计时和 PNG/Unicode 路径。Vulkan 检查无新增进程顶层 HWND；OpenGL 检查无可见窗口和残留应用/引导窗口，允许驱动内部隐藏对象。已查看实际输出的 1280×720 森林 PNG。
@@ -44,6 +51,12 @@ CTests 数量随构建开关变化，以 `ctest -N` 的当前配置清单为准�
 | `renderer.interaction` | `tests/interaction_tests.cpp` | Alpha/Mask 拾取、筛选、透视/正交地面求交和资源生命周期 |
 | `renderer.audio` | `tests/audio_tests.cpp` | 无声卡实际混音、音乐流补页/循环、包络、空间定位、实例与资源生命周期 |
 | `renderer.physics2d` | `tests/physics2d_tests.cpp` | 真实刚体/CCD/命中、事件、查询、距离约束、句柄和场景同步 |
+| `renderer.overlay` | `tests/overlay_tests.cpp` | 通用覆盖层尺寸/颜色/索引、资源引用、纹理副本及快照生命周期 |
+| `renderer.ui` | `tests/ui_tests.cpp` | RmlUi 控件/布局、事件/取消/异常、文本、DPI、拖动捕获、文档与线程身份 |
+| `renderer.text` | `tests/text_tests.cpp` | Unicode 字体/回退、严格 UTF-8、排版、图集缓存/容量、绑定/朝向、屏幕字号及批次存活 |
+| `renderer.text.opengl` / `renderer.text.vulkan` | `tests/text_render_tests.cpp` | 真实遮挡/深度开关、OIT/FXAA、固定屏幕字号/缩放、图集旧版本及字体销毁 |
+| `renderer.ui.opengl` / `renderer.ui.vulkan` | `tests/ui_render_tests.cpp` | GPU 回读验证预乘 Alpha/sRGB、透明顺序、裁剪、纹理原点、字体、线程和快照保留 |
+| `renderer.camera` | `tests/camera_tests.cpp` | 三种模式、输入/坐标、平滑、限幅、传送/切换、父变换、镜头保留和失败原子性 |
 | `renderer.streaming` | `tests/streaming_tests.cpp` | 后台读写、主线程解析、预算、滞回、取消、保存/重试、版本和区块文件 |
 | `renderer.batch` | `tests/batch_tests.cpp` | 不可变批次、资源保留、整块裁剪与几何包围盒 |
 | `renderer.tilemap` | `tests/tilemap_tests.cpp` | 负坐标、脏块缓存、卸载及旧快照 |
@@ -84,6 +97,7 @@ CTests 数量随构建开关变化，以 `ctest -N` 的当前配置清单为准�
 | `renderer.vulkan.forest` | 共用森林示例，以 Vulkan 运行方向动画和交互自检 |
 | `renderer.world.opengl` / `renderer.world.vulkan` | 60 帧流式地图/碰撞/粒子/环境场景，包含编辑保存、传送后的卸载/重载及 OIT/昼夜/天气切换 |
 | `renderer.offscreen.opengl.example` / `renderer.offscreen.vulkan.example` | 无应用窗口直接输出森林 PNG，支持独立 SDK 构建 |
+| `renderer.game.{opengl,vulkan}.{window,offscreen}` | 综合应用音画联动、流式物件/保存、物理/动画/拾取、PNG 与实际 WAV 混音；四项均不依赖声卡 |
 
 高级 GPU 测试进一步覆盖：工作线程独立录制命令、逻辑组绑定映射、GPU 生成间接参数、图分配后 Device 移动、纹理视图底层存储存活、透明线性混合、Alpha Mask、HDR ToneMap、异步 Pass 计时、方向光接收阴影和 PBR 参数变化。
 
@@ -91,7 +105,7 @@ CTests 数量随构建开关变化，以 `ctest -N` 的当前配置清单为准�
 
 ## 复现命令
 
-窗口 GPU 测试通过 GLFW 和独立渲染纹理调用真实后端。大多数使用隐藏窗口，全屏测试会短暂显示窗口并以串行方式切换当前桌面模式；新增离屏测试不初始化 GLFW，Vulkan 离屏无需显示服务，Windows OpenGL 使用 WGL pbuffer。标准 `windows` 预设在完整模块及示例开启、GPU 检查关闭时注册十九项 CPU 检查，GPU 测试使用单独预设：
+窗口 GPU 测试通过 GLFW 和独立渲染纹理调用真实后端。大多数使用隐藏窗口，全屏测试会短暂显示窗口并以串行方式切换当前桌面模式；新增离屏测试不初始化 GLFW，Vulkan 离屏无需显示服务，Windows OpenGL 使用 WGL pbuffer。标准 `windows` 预设在 GPU 检查关闭时只注册 CPU 检查，具体数量随模块及示例开关变化。GPU 测试使用单独预设：
 
 ```powershell
 cmake --preset windows-gpu-tests
@@ -99,7 +113,7 @@ cmake --build --preset windows-gpu-tests --parallel 6
 ctest --preset windows-gpu-tests --verbose
 ```
 
-完整双后端配置使用以下命令；九个扩展保持开启，已有缓存中关闭过的扩展需要重新设置对应开关：
+完整双后端配置使用以下命令；十二个扩展保持开启，已有缓存中关闭过的扩展需要重新设置对应开关：
 
 ```powershell
 cmake --preset windows -DRENDERER_BUILD_OPENGL=ON -DRENDERER_BUILD_VULKAN=ON `
@@ -157,3 +171,29 @@ ctest --test-dir build/windows -C Release --output-on-failure
 | 中文注释显示乱码 | 源码和文档使用 UTF-8；MSVC 目标已设置 /utf-8，编辑器也应使用 UTF-8 |
 
 `readback()` 和 `waitIdle()` 都是同步操作，不应放入希望衡量无阻塞吞吐的每帧路径。Shader 编译异常包含 sourceName 和编译日志，建议保留这些信息定位布局或源码问题。
+
+## 五项渲染基础增强验证（2026-10-25）
+
+- 后台资源：真实 PNG/OBJ/MTL 解码、Unicode 及补充平面字符路径、发布预算、取消/失败、包卸载和旧快照/材质内存保留。
+- 双后端真实像素：新资源上传预算、静态实例预热后零上传、单实例范围更新、顶点/表面函数、Alpha Mask/阴影 Shader、加色与预乘、相机纹理方向/实时更新，以及反馈/跨设备/设备销毁后的拒绝。
+- UI/文字：预编辑更新、选区恢复、中文提交/取消/失焦、剪贴板服务、调试面板不抢焦点、字体预热/缓存回收/卸载；Windows 原生组合生命周期通过消息注入检查延迟排队，UI GPU 图片在上下文销毁后继续保留实时纹理。
+- features 四组合：Windows 窗口/离屏、OpenGL/Vulkan、两种线程模式，90 帧并保存 PNG；已查看小地图、角色预览、中文名字牌/输入与统计面板的实际图像。
+- SDK：无 VULKAN_SDK 环境变量，安装后的全部 33 项示例检查通过；API 和源示例不包含原生图形/第三方实现头文件。
+
+原生 IME 的自动验证覆盖消息桥接及 UI 状态机，不冒充对所有输入法版本、候选窗口外观或其他操作系统的人工验证。GPU 内存统计为载荷估算，测试不将其当作驱动实际显存。
+
+## 压缩/数组与 SDF 回归（2026-10-25）
+
+该阶段完整配置为 88 项检查：50 个测试本体、38 项示例运行检查，22 个示例目标。新增 BC1/2/3/4/5/7 GPU 上传/回读、数组层/mip 视图及存储图像/拷贝、逐实例层合批、强制 RGBA 降级、sRGB/Alpha 离线 mip 和 DDS Unicode/截断检查。SDF 覆盖规范字号复用、平滑边缘/外描边、LRU 保护与旧快照像素保留；UI 与拾取验证压缩数组选层。
+
+texture_text 在两后端窗口/离屏四种组合运行，并实际检查 PNG。对照图显示独立图片、RGBA8 数组、BC3 数组+mip 以及位图/SDF 放大文字。GPU 格式检查以本机设备能力为准，不代表所有驱动支持所有 BC 格式；降级路径另用 forceTextureDecompression 真实执行。文档见[纹理说明](TEXTURES.md)和[示例](../examples/texture_text/README.md)。
+
+该阶段 Debug/Release 的 88 项均通过（修正新增拾取测试的尺寸夹具后重跑该项）；安装后的 38 项聚合检查、texture_text 独立 SDK 工程的 5 项检查通过，均不依赖 VULKAN_SDK 环境变量。仅 core 的 9 项、core+text 的 11 项 CPU 检查通过；仅 core 的精简 SDK 可独立构建和运行 DDS 打包器。新增目标的 VS 分组、头文件保护、格式、本地文档链接、两个编码库的哈希/原始许可及可搬移导出均已检查。
+
+## 上传、场景与字形优化（2026-10-25）
+
+最终 Debug/Release 各 93 项 CTest 全部通过；53 个测试本体与 40 项示例检查，23 个示例目标。资源包卸载后失效提取的缓存引用已修复，新增检查覆盖显式清理、移动后 BVH 重拟合、极端位移余量的非有限界限拒绝。后续边界检查通过 Debug/Release 的核心/引擎/优化三项定向重跑。
+
+关闭后端的 core+text 12 项、仅 core 10 项检查通过；仅 core SDK 的 DDS 工具独立构建运行通过。Debug/Release SDK 每配置仍 27 个静态库；移除 VULKAN_SDK 后，聚合示例 40 项检查通过，performance 独立 SDK 的两项六负载/双线程检查通过。独立工程关闭测试或示例后，CTest 清单均为 0，恢复开关后重新生成。
+
+性能采样为两后端、两线程、六负载、每档两轮，各 48 行参考/优化数据，5000 精灵、16 帧预热、80 帧采样；分块原有粗裁剪快路径恢复后单独按同参数补采。48 对终帧 PNG 字节完全一致，已查看实际中文字形压力图。上传统计验证 Vulkan 数组流入 80 帧由 580 次提交/等待变为 10 次提交、0 次上传等待；字形像素载荷为原来的四分之一。均值/P95、CPU 字形首次栅格化瓶颈和小批次边界见[性能报告](PERFORMANCE_RESULTS.md)，复现入口见[基准](../examples/performance/README.md)。

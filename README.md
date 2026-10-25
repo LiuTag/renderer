@@ -2,13 +2,21 @@
 
 C++20 实时三维渲染引擎，支持 OpenGL 4.5 Core 与可选 Vulkan 1.3 后端，共用场景、Shader 与高层渲染管线。对外服务类统一使用 PImpl，公共头文件不包含原生图形 API 或第三方实现类型。
 
+支持 [BC 压缩纹理与 DDS、纹理数组](docs/TEXTURES.md)，精灵可以逐实例选择数组层并合批；[世界文字](docs/TEXT.md)增加可选 SDF、缩放抗锯齿、描边及自动 LRU 缓存。[texture_text 示例](examples/texture_text/README.md)提供对照画面和 CPU DDS 打包工具，两种后端共用接口。
+
+[性能优化](docs/OPTIMIZATION.md)提供批量异步传输与暂存池、场景缓存/BVH/拾取、共享固定精灵几何及 R8 字形局部更新。新的 [performance 示例](examples/performance/README.md)覆盖六类负载及参考模式，记录 P95/P99、GPU、上传和内存指标。
+
 中文文档：[文档导航](docs/README.md) · [快速开始](docs/GETTING_STARTED.md) · [接口说明](docs/API_GUIDE.md) · [架构与扩展](docs/ARCHITECTURE.md) · [验证与排错](docs/VALIDATION.md)。
 
 当前源码与 SDK 包版本为 0.2.0。近期新增能力和工程整理见[版本变更记录](CHANGELOG.md)，完整能力及边界见[实现清单](IMPLEMENTATION.md)。
 
+[渲染基础能力综合示例](examples/features/README.md)展示异步图片/模型加载、资源包卸载与上传预算、CPU/GPU 内存统计和调试面板、帧槽实例增量上传、自定义 GLSL 材质与混合模式，以及直接用于 UI 的小地图/角色预览 GPU 纹理。文字支持预热/缓存回收，Windows UI 已接入组合编辑与系统剪贴板桥接。详见[资源加载](docs/ASSET_LOADING.md)、[渲染扩展](docs/RENDERING_EXTENSIONS.md)和[性能诊断](docs/DIAGNOSTICS.md)。
+
+[森林营地综合示例](examples/game/README.md)将十二个可选模块组合为可操作应用：方向动画与脚步声、推箱子与碰撞声、流式地图和采集保存、火烟雨雪、昼夜配乐、遮挡淡出和拾取。运行 `renderer_game_demo --backend vulkan` 或 `--backend opengl`；支持离屏 PNG 和实际混音 WAV 输出。
+
 [离屏渲染与 PNG](docs/OFFSCREEN.md)：无需应用窗口即可取得渲染图片。`Renderer::createVulkanOffscreen()` 完全跳过窗口/表面/交换链；Windows OpenGL 使用 WGL pbuffer。统一通过 `renderToImage(snapshot, view).savePng(path)` 保存，示例为 `renderer_offscreen_demo`。
 
-二次开发请从[完整开发手册](docs/DEVELOPMENT_GUIDE.md)开始：包含 SDK 接入、场景/材质/模型、相机与输入、透明和线程、Shader/RHI/RenderGraph、性能排错与源码扩展，并附四个可以通过已安装 SDK 独立构建的示例。
+二次开发请从[完整开发手册](docs/DEVELOPMENT_GUIDE.md)开始：包含 SDK 接入、场景/材质/模型、相机与输入、透明和线程、Shader/RHI/RenderGraph、性能排错与源码扩展，并附可以通过已安装 SDK 独立构建的[示例工程](examples/README.md)。
 
 制作图片角色与三维地面结合的游戏，参见 [Sprite / Billboard 开发说明](docs/SPRITES.md)：支持图集、脚底锚点、方向序列帧、排序组及透明区域拾取。运行 `renderer_sprite_demo --threaded` 体验可移动、可选择物体的森林示例。
 
@@ -26,7 +34,13 @@ C++20 实时三维渲染引擎，支持 OpenGL 4.5 Core 与可选 Vulkan 1.3 后
 
 源码为 UTF-8；公共接口和关键算法已补充中文注释，重点解释资源生命周期、场景版本、批处理、图编译及线程同步。
 
-模块已拆分为 `renderer::core`、`renderer::opengl`、可选的 `renderer::vulkan`，以及 animation、interaction、audio、tilemap、collision、particles、environment、presentation、physics2d 九个可选模块。应用显式链接所需后端与扩展；构建开关和迁移方式见[模块说明](docs/MODULES.md)。
+模块已拆分为 `renderer::core`、`renderer::opengl`、可选的 `renderer::vulkan`，以及 animation、interaction、audio、tilemap、collision、particles、environment、presentation、physics2d、camera、ui、text 十二个可选模块。应用显式链接所需后端与扩展；构建开关和迁移方式见[模块说明](docs/MODULES.md)。
+
+`renderer::camera` 提供轨道、跟随和自由相机，封装姿态计算、平滑、限幅及父节点写回。应用只传入目标和设备无关输入，综合游戏已接入，见[相机控制文档](docs/CAMERA.md)。
+
+`renderer::ui` 使用 RmlUi/FreeType 提供游戏基础控件、文档/皮肤、文字和输入路由，输出不可变覆盖层，在双后端的 ToneMap/FXAA 后合成。综合游戏已有实际 HUD 和控制按钮，另有独立窗口/离屏示例，见[UI 文档](docs/UI.md)。
+
+`renderer::text` 提供独立世界文字：字体与回退、字形图集/排版、节点绑定、三种 Billboard、固定屏幕字号和遮挡开关。综合游戏已加入名字牌、火堆文字和上浮伤害数字，见[世界文字文档](docs/TEXT.md)。
 
 [音乐与音效](docs/AUDIO.md)使用 miniaudio：音乐流式读取、短音效叠加、分组音量/静音、淡入淡出和基础空间音频。运行 `renderer_audio_demo` 播放演示声，或加 `--offline` 进行无声卡混音检查。
 
@@ -94,7 +108,7 @@ cmake --preset windows -DFETCHCONTENT_SOURCE_DIR_GLFW=C:/deps/glfw-3.4 -DFETCHCO
 仅构建 CPU 核心、Shader 工具链、导入器和 CPU 测试：
 
 ```powershell
-cmake -S . -B build/core -DRENDERER_BUILD_OPENGL=OFF -DRENDERER_BUILD_VULKAN=OFF -DRENDERER_BUILD_EXAMPLES=OFF -DRENDERER_BUILD_ANIMATION=OFF -DRENDERER_BUILD_INTERACTION=OFF -DRENDERER_BUILD_AUDIO=OFF -DRENDERER_BUILD_TILEMAP=OFF -DRENDERER_BUILD_COLLISION=OFF -DRENDERER_BUILD_PARTICLES=OFF -DRENDERER_BUILD_ENVIRONMENT=OFF -DRENDERER_BUILD_PRESENTATION=OFF -DRENDERER_BUILD_PHYSICS2D=OFF
+cmake -S . -B build/core -DRENDERER_BUILD_OPENGL=OFF -DRENDERER_BUILD_VULKAN=OFF -DRENDERER_BUILD_EXAMPLES=OFF -DRENDERER_BUILD_ANIMATION=OFF -DRENDERER_BUILD_INTERACTION=OFF -DRENDERER_BUILD_AUDIO=OFF -DRENDERER_BUILD_TILEMAP=OFF -DRENDERER_BUILD_COLLISION=OFF -DRENDERER_BUILD_PARTICLES=OFF -DRENDERER_BUILD_ENVIRONMENT=OFF -DRENDERER_BUILD_PRESENTATION=OFF -DRENDERER_BUILD_PHYSICS2D=OFF -DRENDERER_BUILD_CAMERA=OFF -DRENDERER_BUILD_UI=OFF -DRENDERER_BUILD_TEXT=OFF
 cmake --build build/core --config Debug
 ctest --test-dir build/core -C Debug --output-on-failure
 ```
@@ -124,7 +138,7 @@ cmake --install build/windows --config Release
 ```text
 include/renderer/  SDK 公共接口
 src/              核心、共用管线、窗口平台与 OpenGL/Vulkan 后端
-modules/          九个可选模块（动画、交互、音频、地图、碰撞、粒子、环境、表现、二维物理）
+modules/          十二个可选模块（动画、交互、音频、地图、碰撞、粒子、环境、表现、二维物理、相机、UI、世界文字）
 examples/         应用示例与精灵性能测试
 tests/            单元/集成测试及必要素材
 cmake/            SDK 包配置
@@ -234,7 +248,7 @@ device.wait(completion);
 
 Pass 按资源生产顺序声明，可用 dependsOn() 增加显式依赖。范围跟踪以纹理 mip 和 Buffer 字节为单位；exportResource() 和有副作用的 Pass 保留输出依赖。兼容且生命周期不重叠的临时资源复用物理对象。编译图可重复执行，持有的设备状态不因 Device 包装对象移动而失效。回调只应解析该 Pass 声明过的图资源；外部可变资源必须导入并声明访问，外部互相别名的纹理视图需由调用者统一建模。
 
-当前 RHI 桌面基础 Profile 使用 2D 纹理、uint32 索引、float 顶点属性、UBO/SSBO、组合采样纹理与 Storage Image。描述符数组等超出 Profile 的请求会明确拒绝。能力、格式支持、对齐、绑定数量可查询；提交的资源访问由上层声明。创建/提交/销毁 Device 资源在设备上下文线程执行，CommandEncoder 可在工作线程独立录制。
+当前 RHI 桌面基础 Profile 使用 2D/二维数组纹理与桌面 BC 压缩、uint32 索引、float 顶点属性、UBO/SSBO、组合采样纹理与 Storage Image。描述符数组等超出 Profile 的请求会明确拒绝。能力、格式支持、对齐、绑定数量可查询；提交的资源访问由上层声明。创建/提交/销毁 Device 资源在设备上下文线程执行，CommandEncoder 可在工作线程独立录制。
 
 ## 诊断与验证
 
@@ -248,7 +262,7 @@ cmake --build --preset windows-gpu-tests
 ctest --preset windows-gpu-tests --verbose
 ```
 
-完整双后端配置包含 48 项 CTest 检查，覆盖核心、九个扩展、窗口和离屏渲染，以及安装后的 SDK 使用方式。窗口测试大多使用隐藏窗口，全屏检查会短暂显示窗口；Vulkan 离屏检查不初始化 GLFW、无需显示服务。复现命令与实机验证范围见[验证说明](docs/VALIDATION.md)。
+完整双后端配置包含 93 项 CTest 检查，覆盖核心、十二个扩展、窗口和离屏渲染、综合应用及安装后的 SDK 使用方式。窗口测试大多使用隐藏窗口，全屏检查会短暂显示窗口；Vulkan 离屏检查不初始化 GLFW、无需显示服务。复现命令与实机验证范围见[验证说明](docs/VALIDATION.md)。
 
 ```powershell
 .\build\windows\Release\renderer_demo.exe --threaded --hidden --frames 30 --capture build/demo.ppm

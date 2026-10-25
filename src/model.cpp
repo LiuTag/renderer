@@ -1,5 +1,7 @@
 #include "renderer/model.hpp"
+#include "renderer/texture.hpp"
 #define TINYGLTF_IMPLEMENTATION
+#define STBI_MAX_DIMENSIONS 16384
 #define STB_IMAGE_IMPLEMENTATION
 #define TINYGLTF_NO_STB_IMAGE_WRITE
 #include <algorithm>
@@ -70,11 +72,30 @@ ModelInstance Model::instantiate(Scene &scene, NodeHandle parent, std::string_vi
     return instance;
 }
 namespace {
+std::string pathUtf8(const std::filesystem::path &p) {
+    auto s = p.u8string();
+    return {s.begin(), s.end()};
+}
 TextureDesc imageFile(const std::filesystem::path &path, bool srgb) {
+    auto extension = path.extension().u8string();
+    std::transform(extension.begin(), extension.end(), extension.begin(),
+                   [](char8_t c) { return c >= u8'A' && c <= u8'Z' ? char8_t(c + 32) : c; });
+    if (extension == u8".dds")
+        return texture::loadDds(path);
+
+    std::ifstream file(path, std::ios::binary | std::ios::ate);
+    if (!file || file.tellg() < 0 || file.tellg() > 256 * 1024 * 1024)
+        throw std::runtime_error("Cannot read image or encoded image exceeds 256 MiB: " +
+                                 pathUtf8(path));
+    std::vector<stbi_uc> encoded(size_t(file.tellg()));
+    file.seekg(0);
+    if (!file.read(reinterpret_cast<char *>(encoded.data()), std::streamsize(encoded.size())))
+        throw std::runtime_error("Cannot read image: " + pathUtf8(path));
     int width = 0, height = 0, channels = 0;
-    stbi_uc *pixels = stbi_load(path.string().c_str(), &width, &height, &channels, 4);
+    stbi_uc *pixels =
+        stbi_load_from_memory(encoded.data(), int(encoded.size()), &width, &height, &channels, 4);
     if (!pixels)
-        throw std::runtime_error("Image load failed: " + path.string() + ": " +
+        throw std::runtime_error("Image load failed: " + pathUtf8(path) + ": " +
                                  (stbi_failure_reason() ? stbi_failure_reason() : "unknown"));
     std::unique_ptr<stbi_uc, decltype(&stbi_image_free)> storage(pixels, stbi_image_free);
     if (width <= 0 || height <= 0 || width > 16384 || height > 16384)
@@ -127,7 +148,7 @@ struct Import {
         return h;
     }
     TextureHandle image(const std::filesystem::path &path, bool srgb) {
-        auto key = std::pair{std::filesystem::absolute(path).lexically_normal().string(), srgb};
+        auto key = std::pair{pathUtf8(std::filesystem::absolute(path).lexically_normal()), srgb};
         if (auto i = imageCache.find(key); i != imageCache.end())
             return i->second;
         auto h = texture(imageFile(path, srgb));
@@ -323,8 +344,8 @@ Model AssetStore::loadModel(const std::filesystem::path &path) {
         tinygltf::Model source;
         std::string error, warning;
         const bool ok = extension == ".glb"
-                            ? loader.LoadBinaryFromFile(&source, &error, &warning, path.string())
-                            : loader.LoadASCIIFromFile(&source, &error, &warning, path.string());
+                            ? loader.LoadBinaryFromFile(&source, &error, &warning, pathUtf8(path))
+                            : loader.LoadASCIIFromFile(&source, &error, &warning, pathUtf8(path));
         if (!ok)
             throw std::runtime_error("glTF load failed: " + error);
         if (!warning.empty())
@@ -609,7 +630,7 @@ Model AssetStore::loadModel(const std::filesystem::path &path) {
     } else if (extension == ".obj") {
         std::ifstream stream(path);
         if (!stream)
-            throw std::runtime_error("Cannot open OBJ: " + path.string());
+            throw std::runtime_error("Cannot open OBJ: " + pathUtf8(path));
         std::vector<Vec3> positions, normalsList;
         std::vector<Vec2> uvs;
         MeshDesc mesh;
@@ -621,7 +642,7 @@ Model AssetStore::loadModel(const std::filesystem::path &path) {
         auto loadMtl = [&](const std::filesystem::path &materialPath) {
             std::ifstream input(materialPath);
             if (!input)
-                throw std::runtime_error("Cannot open MTL: " + materialPath.string());
+                throw std::runtime_error("Cannot open MTL: " + pathUtf8(materialPath));
             std::string row, name;
             MaterialDesc material;
             auto flush = [&] {
@@ -660,7 +681,10 @@ Model AssetStore::loadModel(const std::filesystem::path &path) {
                     if (file.empty() || file[0] == '-')
                         throw std::invalid_argument(
                             "MTL texture options are unsupported; supply a texture filename");
-                    auto h = transaction.image(materialPath.parent_path() / file, key == "map_Kd");
+                    auto h = transaction.image(
+                        materialPath.parent_path() /
+                            std::filesystem::path(std::u8string(file.begin(), file.end())),
+                        key == "map_Kd");
                     if (key == "map_Kd")
                         material.baseColorTexture = h;
                     else
@@ -706,7 +730,8 @@ Model AssetStore::loadModel(const std::filesystem::path &path) {
             } else if (key == "mtllib") {
                 std::string file;
                 std::getline(fields >> std::ws, file);
-                loadMtl(path.parent_path() / file);
+                loadMtl(path.parent_path() /
+                        std::filesystem::path(std::u8string(file.begin(), file.end())));
             } else if (key == "usemtl") {
                 std::string name;
                 fields >> name;
@@ -823,7 +848,7 @@ Model AssetStore::loadModel(const std::filesystem::path &path) {
             }
         }
         Model::Impl::Node node;
-        node.name = path.stem().string();
+        node.name = pathUtf8(path.stem());
         node.mesh = MeshRenderer{transaction.mesh(std::move(mesh)), std::move(slots)};
         data->nodes.push_back(std::move(node));
     } else

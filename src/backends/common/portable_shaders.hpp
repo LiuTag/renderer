@@ -25,22 +25,47 @@ layout(std140,set=0,binding=0) uniform FrameData {
     vec4 contactParameters;
 } frame;
 )";
-inline const std::string materialBlock = R"(
+inline std::string materialBlock(bool arrayBase = false) {
+    return std::string(R"(
 layout(std140,set=1,binding=0) uniform MaterialData {
     vec4 baseColor;
     vec4 factors;
     vec4 emissive;
     vec4 misc;
+    vec4 effectParameters;
+    vec4 textureParameters;
+    vec4 auxiliaryOrigins;
 } material;
-layout(set=1,binding=1) uniform sampler2D baseMap;
+)") + "layout(set=1,binding=1) uniform " +
+           (arrayBase ? "sampler2DArray" : "sampler2D") + " baseMap;\n";
+}
+inline std::string baseSampling(bool arrayBase) {
+    return std::string(R"(
+vec4 sampleBase(vec2 p,vec4 flags){
+    if(material.textureParameters.y>0.5)p.y=1.0-p.y;
+    float layer=flags.z>0.5?flags.y:material.textureParameters.x;
+    vec4 value=texture(baseMap,)") +
+           (arrayBase ? "vec3(p,layer)" : "p") + R"();
+    return material.textureParameters.w>0.5?vec4(1,1,1,value.r):value;
+}
+vec2 mapUV(vec2 p,float flip){return flip>0.5?vec2(p.x,1.0-p.y):p;}
 )";
+}
 /**
  * @brief 生成场景或阴影顶点着色器源码。
  * @param shadow true 时使用光源视投影，false 时使用相机视投影。
+ * @param effect 可修改局部位置/法线/UV 的材质函数体。
  * @return 使用统一绑定约定的 GLSL 源码文本。
  */
-inline std::string sceneVertex(bool shadow) {
-    return std::string("#version 450\n") + frameBlock + R"(
+inline std::string sceneVertex(bool shadow, const std::string &effect = {},
+                               bool arrayBase = false) {
+    return std::string("#version 450\n") + frameBlock + materialBlock(arrayBase) + R"(
+#define effectParameters material.effectParameters
+#define effectTime frame.ambient.y
+void effectVertex(inout vec3 position,inout vec3 normal,inout vec2 texcoord){
+)" + effect +
+           R"(
+}
 layout(location=0) in vec3 position;
 layout(location=1) in vec3 normal;
 layout(location=2) in vec2 texcoord;
@@ -62,9 +87,11 @@ layout(location=6) flat out vec4 instanceOutline;
 layout(location=7) flat out vec4 instanceEffects;
 layout(location=8) flat out vec4 instanceRect;
 void main(){
-    vec4 p=world*vec4(position,1);
-    worldPosition=p.xyz;worldNormal=normalMatrix*normal;
-    uv=texcoord*uvRect.zw+uvRect.xy;instanceFlags=flags;instanceTint=tint;
+    vec3 localPosition=position,localNormal=normal;vec2 localUV=texcoord;
+    effectVertex(localPosition,localNormal,localUV);
+    vec4 p=world*vec4(localPosition,1);
+    worldPosition=p.xyz;worldNormal=normalMatrix*localNormal;
+    uv=localUV*uvRect.zw+uvRect.xy;instanceFlags=flags;instanceTint=tint;
     instanceOverlay=colorOverlay;instanceOutline=outlineColor;instanceEffects=effects;instanceRect=uvRect;
     gl_Position=)" +
            (shadow ? "frame.lightViewProjection" : "frame.viewProjection") + R"(*p;
@@ -73,22 +100,36 @@ void main(){
 }
 /**
  * @brief 生成支持 Alpha Mask 的阴影片元着色器源码。
+ * @param surface 在裁剪前修改基础 RGBA 的材质函数体。
  * @return 使用统一绑定约定的 GLSL 源码文本。
  */
-inline std::string shadowFragment() {
+inline std::string shadowFragment(const std::string &surface = {}, bool arrayBase = false) {
     // Alpha Mask 的裁剪规则与主场景保持一致，使镂空区域不会投出实心阴影。
-    return std::string("#version 450\n") + materialBlock + R"(
+    return std::string("#version 450\n") + frameBlock + materialBlock(arrayBase) + R"(
+#define effectParameters material.effectParameters
+#define effectTime frame.ambient.y
+void effectSurface(inout vec4 base,vec2 uv,vec3 worldPosition){
+)" + surface +
+           R"(
+}
+layout(location=0) in vec3 worldPosition;
 layout(location=2) in vec2 uv;
+layout(location=3) flat in vec4 instanceFlags;
 layout(location=4) flat in vec4 instanceTint;
-void main(){if(material.misc.y>0.5 && texture(baseMap,uv).a*material.baseColor.a*instanceTint.a<material.factors.z)discard;}
+layout(location=7) flat in vec4 instanceEffects;
+)" + baseSampling(arrayBase) +
+           R"(
+void main(){vec4 texel=sampleBase(uv,instanceFlags);if(instanceEffects.y>0.0){float w=max(fwidth(texel.a)*instanceEffects.z,1.0/255.0);texel.a=smoothstep(0.5-w*0.5,0.5+w*0.5,texel.a);}vec4 base=texel*material.baseColor*instanceTint;effectSurface(base,uv,worldPosition);if(material.misc.y>0.5 && base.a<material.factors.z)discard;}
 )";
 }
 /**
  * @brief 生成常规或加权 OIT 的 PBR 片元着色器源码。
  * @param weightedOit 是否输出 OIT 累积与透射率附件。
+ * @param surface 在 Alpha 裁剪和光照前修改基础 RGBA 的函数体。
  * @return 使用统一绑定约定的 GLSL 源码文本。
  */
-inline std::string pbrFragment(bool weightedOit = false) {
+inline std::string pbrFragment(bool weightedOit = false, const std::string &surface = {},
+                               bool arrayBase = false) {
     // 使用 GGX/Smith/Schlick 直接光照；法线贴图切线基由屏幕导数重建。
     // 阴影 PCF 对每个偏移样本修正接收平面深度，配合光栅偏移抑制自阴影条纹。
     // 共用光照代码，只替换输出阶段；OIT 使用加权预乘颜色和乘法透过率。
@@ -106,9 +147,15 @@ void writeColor(vec4 color){
 )"
                                            : R"(
 layout(location=0) out vec4 outputColor;
-void writeColor(vec4 color){outputColor=color;}
+void writeColor(vec4 color){if(material.misc.w>0.5&&material.misc.w<1.5)color.rgb*=color.a;outputColor=color;}
 )";
-    return std::string("#version 450\n") + frameBlock + materialBlock + output + R"(
+    return std::string("#version 450\n") + frameBlock + materialBlock(arrayBase) + output + R"(
+#define effectParameters material.effectParameters
+#define effectTime frame.ambient.y
+void effectSurface(inout vec4 base,vec2 uv,vec3 worldPosition){
+)" + surface +
+           R"(
+}
 /**
  * @brief 方向光、点光源或聚光灯组件；方向取节点局部 -Z。
  */
@@ -128,12 +175,14 @@ layout(location=5) flat in vec4 instanceOverlay;
 layout(location=6) flat in vec4 instanceOutline;
 layout(location=7) flat in vec4 instanceEffects;
 layout(location=8) flat in vec4 instanceRect;
+)" + baseSampling(arrayBase) +
+           R"(
 float spriteAlpha(vec2 p) {
     vec2 lo=min(instanceRect.xy,instanceRect.xy+instanceRect.zw);
     vec2 hi=max(instanceRect.xy,instanceRect.xy+instanceRect.zw);
     if(any(lessThan(p,lo))||any(greaterThan(p,hi)))return 0;
-    vec2 halfTexel=0.5/vec2(textureSize(baseMap,0));
-    return texture(baseMap,clamp(p,lo+halfTexel,hi-halfTexel)).a;
+    vec2 halfTexel=0.5/vec2(textureSize(baseMap,0).xy);
+    return sampleBase(clamp(p,lo+halfTexel,hi-halfTexel),instanceFlags).a;
 }
 
 const float PI=3.14159265359;
@@ -145,7 +194,7 @@ vec3 normalValue(){
     if(abs(determinant)<1e-10)return n;
     vec3 t=(q1*s2.y-q2*s1.y)/determinant;t=safeNormalize(t-n*dot(n,t));
     vec3 b=safeNormalize(cross(n,t))*sign(determinant);
-    vec3 mapped=texture(normalMap,uv).xyz*2-1;mapped.xy*=material.factors.w;
+    vec3 mapped=texture(normalMap,mapUV(uv,material.auxiliaryOrigins.x)).xyz*2-1;if(material.textureParameters.z>0.5)mapped.z=sqrt(max(0.0,1.0-dot(mapped.xy,mapped.xy)));mapped.xy*=material.factors.w;
     return safeNormalize(mat3(t,b,n)*mapped);
 }
 float shadowValue(vec3 n,vec3 light){
@@ -159,10 +208,21 @@ float shadowValue(vec3 n,vec3 light){
     return result/9;
 }
 void main(){
-    vec4 base=texture(baseMap,uv)*material.baseColor*instanceTint;
+    vec4 texel=sampleBase(uv,instanceFlags);
+    float fill=texel.a,outer=fill;
+    if(instanceEffects.y>0.0){
+        float w=max(fwidth(texel.a)*instanceEffects.z,1.0/255.0);
+        fill=smoothstep(0.5-w*0.5,0.5+w*0.5,texel.a);
+        float offset=min(instanceEffects.x/(2.0*instanceEffects.y),0.49);
+        outer=smoothstep(0.5-offset-w*0.5,0.5-offset+w*0.5,texel.a);
+        texel.a=fill+(outer-fill)*instanceOutline.a;
+    }
+    vec4 base=texel*material.baseColor*instanceTint;
+    if(instanceEffects.y>0.0 && texel.a>0.0)base.rgb=mix(instanceOutline.rgb,base.rgb,fill/texel.a);
+    effectSurface(base,uv,worldPosition);base.a=clamp(base.a,0,1);
     if(material.misc.y>0.5&&material.misc.y<1.5&&base.a<material.factors.z)discard;
-    if(instanceEffects.x>0.0&&instanceOutline.a>0.0) {
-        vec2 pixel=vec2(instanceEffects.x)/vec2(textureSize(baseMap,0));
+    if(instanceEffects.y<=0.0&&instanceEffects.x>0.0&&instanceOutline.a>0.0) {
+        vec2 pixel=vec2(instanceEffects.x)/vec2(textureSize(baseMap,0).xy);
         float neighbor=1;
         for(int y=-1;y<=1;++y)for(int x=-1;x<=1;++x)
             if(x!=0||y!=0)neighbor=min(neighbor,spriteAlpha(uv+vec2(x,y)*pixel));
@@ -170,10 +230,10 @@ void main(){
         base.rgb=mix(base.rgb,instanceOutline.rgb,edge*instanceOutline.a);
     }
     base.rgb=mix(base.rgb,instanceOverlay.rgb,instanceOverlay.a);
-    vec3 emission=texture(emissiveMap,uv).rgb*material.emissive.rgb;
+    vec3 emission=texture(emissiveMap,mapUV(uv,material.auxiliaryOrigins.w)).rgb*material.emissive.rgb;
     if(material.misc.x>0.5){writeColor(vec4(base.rgb+emission,material.misc.y>1.5?base.a:1));return;}
     vec3 n=normalValue(),v=safeNormalize(frame.cameraPosition.xyz-worldPosition);
-    vec4 mr=texture(metallicRoughnessMap,uv);float metallic=clamp(material.factors.x*mr.b,0,1),roughness=clamp(material.factors.y*mr.g,0.045,1);
+    vec4 mr=texture(metallicRoughnessMap,mapUV(uv,material.auxiliaryOrigins.y));float metallic=clamp(material.factors.x*mr.b,0,1),roughness=clamp(material.factors.y*mr.g,0.045,1);
     vec3 f0=mix(vec3(0.04),base.rgb,metallic),result=vec3(0);
     for(int i=0;i<int(frame.counts.x);++i){Light light=lights.values[i];vec3 l;float attenuation=1;
         if(light.positionType.w<0.5)l=-light.directionRange.xyz;
@@ -185,7 +245,7 @@ void main(){
         float shadow=(i==int(frame.shadowParameters.y))?shadowValue(n,l):1;
         result+=(diffuse+specular)*light.colorIntensity.rgb*light.colorIntensity.a*attenuation*nl*shadow;
     }
-    float ao=mix(1,texture(occlusionMap,uv).r,material.misc.z);
+    float ao=mix(1,texture(occlusionMap,mapUV(uv,material.auxiliaryOrigins.z)).r,material.misc.z);
     result+=(base.rgb*(1-metallic)+f0*0.1)*frame.ambient.x*ao+emission;
     writeColor(vec4(result,material.misc.y>1.5?base.a:1));
 }

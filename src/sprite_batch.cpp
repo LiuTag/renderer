@@ -33,37 +33,20 @@ void SpriteBatch::replace(const AssetStore &assets, std::span<const BatchSprite>
             throw std::invalid_argument("Batch sprite transform must be finite and invertible");
         auto asset = detail::AssetAccess::sprite(assets, s.renderer.sprite);
         const auto &d = asset->description;
-        const auto anchor = s.world.transformPoint({0, 0, 0});
+        const auto layer =
+            s.renderer.textureLayer == UINT32_MAX ? d.textureLayer : s.renderer.textureLayer;
+        if (layer >= asset->material->texture->description.layers)
+            throw std::invalid_argument("Batch sprite array layer out of bounds");
         const auto &c = s.renderer;
         detail::SpriteSort sort{
             c.sortingLayer,  c.sortingOrder, 0, s.world.transformPoint(c.sortOffset),
             uint32_t(index), owner};
         detail::SpriteRecord record{{}, asset, c, s.world, sort, s.id};
-        // 固定图片使用精确几何包围盒；Billboard 的朝向随相机改变，使用旋转不变的球界。
-        const float x = std::max(std::abs(d.trimOffset.x - d.pivot.x * d.originalSize.x),
-                                 std::abs(d.trimOffset.x + float(d.rect.width) -
-                                          d.pivot.x * d.originalSize.x)) *
-                        c.sizeMultiplier.x / d.pixelsPerUnit;
-        const float y = std::max(std::abs(d.trimOffset.y - d.pivot.y * d.originalSize.y),
-                                 std::abs(d.trimOffset.y + float(d.rect.height) -
-                                          d.pivot.y * d.originalSize.y)) *
-                        c.sizeMultiplier.y / d.pixelsPerUnit;
-        float scale = 0;
-        for (int column = 0; column < 2; ++column)
-            scale = std::max(
-                scale, std::hypot(s.world(0, column), s.world(1, column), s.world(2, column)));
-        const float radius = scale * std::hypot(x, y);
-        if (!std::isfinite(radius))
-            throw std::invalid_argument("Batch bounds overflow");
-        AABB bound{anchor - Vec3{radius, radius, radius}, anchor + Vec3{radius, radius, radius}};
-        if (c.billboard == BillboardMode::Fixed) {
-            const auto geometry = detail::spriteGeometry(record, Mat4::identity());
-            if (!geometry)
-                throw std::invalid_argument("Batch sprite geometry is singular");
-            bound = geometry->bounds;
-        }
-        if (!finite(bound.minimum) || !finite(bound.maximum))
-            throw std::invalid_argument("Batch bounds overflow");
+        if (c.billboard == BillboardMode::Fixed)
+            if (auto geometry = detail::spriteGeometry(record, Mat4::identity()))
+                record.fixedGeometry = std::make_shared<const detail::SpriteGeometry>(*geometry);
+        const auto bound = detail::conservativeSpriteBounds(record);
+        record.bounds = bound;
         if (index == 0)
             next->data.bounds = bound;
         else {
@@ -77,6 +60,11 @@ void SpriteBatch::replace(const AssetStore &assets, std::span<const BatchSprite>
         }
         next->data.sprites.push_back(std::move(record));
     }
+    std::vector<AABB> boxes;
+    boxes.reserve(next->data.sprites.size());
+    for (const auto &r : next->data.sprites)
+        boxes.push_back(r.bounds);
+    next->data.index.reset(boxes);
     impl_ = std::move(next);
 }
 std::shared_ptr<const detail::SpriteBatchData>

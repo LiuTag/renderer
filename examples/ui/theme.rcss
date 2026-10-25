@@ -1,0 +1,27 @@
+/* 游戏基础控件皮肤；图片、字体和逻辑由应用提供。 */
+body { font-family:LatoLatin; font-size:16dp; color:#e8ead9; width:100%; height:100%; margin:0; pointer-events:none; }
+div { display:block; }
+.panel { position:absolute; background-color:#172c2bea; border:1dp #71947a; padding:14dp; pointer-events:auto; }
+.title { font-size:22dp; color:#f3d68f; margin-bottom:9dp; }
+.row { margin-top:8dp; margin-bottom:8dp; }
+button { display:inline-block; padding:7dp 12dp; margin-right:5dp; margin-bottom:6dp; background-color:#365d50; border:1dp #71947a; color:#f3edd7; tab-index:auto; }
+button:hover { background-color:#507b61; }
+button:active { background-color:#294737; }
+button:disabled { color:#87958d; background-color:#304039; }
+input.text { display:block; width:210dp; height:25dp; padding:4dp; background-color:#11201f; border:1dp #71947a; color:white; tab-index:auto; }
+input.text:focus { border-color:#f3d68f; }
+input.checkbox { display:inline-block; width:16dp; height:16dp; background-color:#11201f; border:2dp #71947a; vertical-align:middle; tab-index:auto; }
+input.checkbox:checked { background-color:#e8bc63; }
+input.range { display:block; width:200dp; height:20dp; margin-top:6dp; tab-index:auto; }
+input.range slidertrack { height:6dp; margin-top:7dp; background-color:#11201f; }
+input.range sliderbar { width:12dp; height:20dp; background-color:#e8bc63; }
+input.range sliderarrowdec,input.range sliderarrowinc { display:none; }
+progress { display:block; width:210dp; height:16dp; background-color:#11201f; border:1dp #71947a; }
+progress fill { background-color:#73b77a; }
+.scroll { overflow:auto; height:80dp; padding:5dp; background-color:#11201f; }
+scrollbarvertical { width:9dp; }
+scrollbarvertical slidertrack { background-color:#243d35; }
+scrollbarvertical sliderbar { min-height:12dp; background-color:#71947a; }
+scrollbarvertical sliderarrowdec,scrollbarvertical sliderarrowinc { display:none; }
+.tooltip { position:absolute; padding:6dp; background-color:#071413ef; border:1dp #e8bc63; pointer-events:none; }
+.muted { color:#a0b5a6; font-size:13dp; }

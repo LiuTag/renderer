@@ -2,6 +2,23 @@
 #include "internal/rhi_backend.hpp"
 #include <stdexcept>
 namespace renderer::rhi {
+void Device::beginUploadBatch() {
+    impl_->backend->beginUploadBatch();
+}
+void Device::uploadRegion(TextureHandle t, TextureRegion r, std::span<const uint8_t> p, uint32_t m,
+                          uint32_t l) {
+    impl_->backend->uploadRegion(t, r, p, m, l);
+}
+void Device::copyTexture(TextureHandle a, TextureHandle b, const TextureCopy &r) {
+    impl_->backend->copyTexture(a, b, r);
+}
+CompletionToken Device::endUploadBatch() {
+    return impl_->backend->endUploadBatch();
+}
+UploadStatistics Device::uploadStatistics() const {
+    (void)impl_->backend->capabilities();
+    return impl_->backend->uploadStats;
+}
 Device::Device(std::unique_ptr<Impl> impl) : impl_(std::move(impl)) {}
 Device::~Device() = default;
 Device::Device(Device &&) noexcept = default;
@@ -18,8 +35,9 @@ BufferHandle Device::createBuffer(const BufferDesc &d, std::span<const std::byte
 TextureHandle Device::createTexture(const TextureDesc &d) {
     return impl_->backend->createTexture(d);
 }
-TextureHandle Device::createTextureView(TextureHandle h, uint32_t f, uint32_t c) {
-    return impl_->backend->createTextureView(h, f, c);
+TextureHandle Device::createTextureView(TextureHandle h, uint32_t f, uint32_t c,
+                                        uint32_t firstLayer, uint32_t layerCount, bool arrayView) {
+    return impl_->backend->createTextureView(h, f, c, firstLayer, layerCount, arrayView);
 }
 SamplerHandle Device::createSampler(const SamplerDesc &d) {
     return impl_->backend->createSampler(d);
@@ -60,8 +78,8 @@ void *Device::map(BufferHandle h) {
 void Device::upload(BufferHandle h, size_t o, std::span<const std::byte> d) {
     impl_->backend->upload(h, o, d);
 }
-void Device::upload(TextureHandle h, std::span<const uint8_t> d, uint32_t m) {
-    impl_->backend->upload(h, d, m);
+void Device::upload(TextureHandle h, std::span<const uint8_t> d, uint32_t m, uint32_t layer) {
+    impl_->backend->upload(h, d, m, layer);
 }
 void Device::generateMipmaps(TextureHandle h) {
     impl_->backend->generateMipmaps(h);
@@ -69,8 +87,8 @@ void Device::generateMipmaps(TextureHandle h) {
 std::vector<std::byte> Device::readBuffer(BufferHandle h, size_t n, size_t o) {
     return impl_->backend->readBuffer(h, n, o);
 }
-RgbaImage Device::readTexture(TextureHandle h) {
-    return impl_->backend->readTexture(h);
+RgbaImage Device::readTexture(TextureHandle h, uint32_t layer) {
+    return impl_->backend->readTexture(h, layer);
 }
 CompletionToken Device::submit(const CommandList &l) {
     if (!l.impl_)

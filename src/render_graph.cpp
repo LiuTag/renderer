@@ -38,7 +38,7 @@ bool same(const Resource &a, const Resource &b) {
     if (const auto *x = std::get_if<rhi::TextureDesc>(&a.desc)) {
         const auto &y = std::get<rhi::TextureDesc>(b.desc);
         return x->width == y.width && x->height == y.height && x->mipLevels == y.mipLevels &&
-               x->format == y.format;
+               x->format == y.format && x->layers == y.layers && x->arrayTexture == y.arrayTexture;
     }
     const auto &x = std::get<rhi::BufferDesc>(a.desc);
     const auto &y = std::get<rhi::BufferDesc>(b.desc);

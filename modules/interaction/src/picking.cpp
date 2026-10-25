@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <renderer/texture.hpp>
 #include <stdexcept>
 #include <unordered_set>
 
@@ -34,11 +35,14 @@ int address(int index, int size, TextureAddress mode) {
     }
     return (index % size + size) % size;
 }
-float alpha(const TextureDesc &texture, Vec2 uv) {
+float alpha(const TextureDesc &texture, Vec2 uv, uint32_t layer) {
+    // 高层相机输出固定为不透明，不存在 CPU 像素副本。
+    if (texture.renderTexture.size().first)
+        return 1;
     const auto sample = [&](int x, int y) {
         x = address(x, int(texture.width), texture.sampling.addressU);
         y = address(y, int(texture.height), texture.sampling.addressV);
-        return float(texture.pixels[(size_t(y) * texture.width + size_t(x)) * 4 + 3]) / 255;
+        return renderer::texture::alpha(texture, uint32_t(x), uint32_t(y), layer);
     };
     if (texture.sampling.magFilter == TextureFilter::Nearest)
         return sample(int(std::floor(uv.x * float(texture.width))),
@@ -60,6 +64,7 @@ struct SceneQuery::Impl {
     uint32_t width, height;
     Mat4 vp, inverse;
     std::vector<Entry> entries;
+    std::vector<size_t> entryBySprite;
 };
 SceneQuery::SceneQuery(RenderSnapshot snapshot, const RenderView &view, uint32_t width,
                        uint32_t height, const SceneQueryFilter &filter)
@@ -72,9 +77,12 @@ SceneQuery::SceneQuery(RenderSnapshot snapshot, const RenderView &view, uint32_t
     impl_->height = height;
     const std::unordered_set<NodeHandle, NodeHash> excluded(filter.excludedNodes.begin(),
                                                             filter.excludedNodes.end());
+    impl_->entryBySprite.assign(impl_->snapshot.sprites().size(), SIZE_MAX);
     for (const auto &sprite : impl_->snapshot.sprites()) {
         if (!(sprite.layerMask & filter.layerMask) || excluded.contains(sprite.node))
             continue;
+        impl_->entryBySprite[size_t(&sprite - impl_->snapshot.sprites().data())] =
+            impl_->entries.size();
         impl_->entries.push_back({&sprite, *sprite.world.inverse()});
     }
 }
@@ -127,7 +135,11 @@ std::optional<SpriteHit> SceneQuery::pickSprite(Vec2 pixel, float alphaThreshold
     std::vector<Candidate> candidates;
     float opaqueDistance = std::numeric_limits<float>::infinity();
     std::optional<SpriteHit> opaque;
-    for (const auto &entry : impl_->entries) {
+    for (auto i : impl_->snapshot.rayCandidates(ray.origin, ray.direction)) {
+        const auto at = impl_->entryBySprite[i];
+        if (at == SIZE_MAX)
+            continue;
+        const auto &entry = impl_->entries[at];
         const auto o = entry.inverse.transformPoint(ray.origin);
         const auto vector =
             entry.inverse * Vec4{ray.direction.x, ray.direction.y, ray.direction.z, 0};
@@ -145,14 +157,16 @@ std::optional<SpriteHit> SceneQuery::pickSprite(Vec2 pixel, float alphaThreshold
         const auto &r = entry.source->uvRect;
         const Vec2 uv{r.x + (local.x + 0.5f) * r.z, r.y + (local.y + 0.5f) * r.w};
         const auto &sprite = *entry.source;
-        const float a = alpha(*sprite.texture, uv) * sprite.tint.w;
+        const float coverage = alpha(*sprite.texture, uv, sprite.textureLayer);
+        const float a = (sprite.distanceFieldRange > 0 ? (coverage >= .5f ? 1.f : 0.f) : coverage) *
+                        sprite.tint.w;
         const auto mode = sprite.alphaMode;
         if (mode == AlphaMode::Mask && a < sprite.alphaCutoff)
             continue;
         if (mode == AlphaMode::Blend && (a <= 0 || a < alphaThreshold))
             continue;
         SpriteHit hit{entry.source->node, world, uv, t, entry.source->instanceId};
-        if (mode != AlphaMode::Blend) {
+        if (mode != AlphaMode::Blend && sprite.depthTest) {
             if (t < opaqueDistance) {
                 opaqueDistance = t;
                 opaque = hit;
@@ -164,6 +178,11 @@ std::optional<SpriteHit> SceneQuery::pickSprite(Vec2 pixel, float alphaThreshold
     bool resultIsOpaque = opaque.has_value();
     // 常规透明与渲染同序，最后覆盖者优先。OIT 本身没有确定前后顺序，选最近交点。
     for (const auto &candidate : candidates) {
+        if (!candidate.entry->source->depthTest) {
+            result = candidate.hit;
+            resultIsOpaque = false;
+            continue;
+        }
         if (candidate.hit.distance >= opaqueDistance)
             continue;
         const bool weighted =

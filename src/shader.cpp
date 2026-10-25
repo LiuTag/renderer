@@ -91,6 +91,12 @@ std::vector<ShaderBinding> reflect(const std::vector<uint32_t> &code) {
             binding.binding = compiler.get_decoration(r.id, spv::DecorationBinding);
             binding.kind = kind;
             const auto &type = compiler.get_type(r.type_id);
+            if (kind == BindingKind::SampledTexture || kind == BindingKind::StorageImage) {
+                if (type.image.dim != spv::Dim2D || type.image.ms)
+                    throw std::invalid_argument(
+                        "Portable texture profile supports single-sample 2D/2D-array images");
+                binding.textureArray = type.image.arrayed;
+            }
             for (uint32_t count : type.array)
                 binding.arraySize *= count;
             if (kind == BindingKind::UniformBuffer || kind == BindingKind::StorageBuffer) {

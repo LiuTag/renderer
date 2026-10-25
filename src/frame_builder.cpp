@@ -25,9 +25,9 @@ PreparedFrame prepareFrame(const RenderSnapshot &snapshot, const RenderView &vie
         if (!std::isfinite(c) || c < 0 || c > 1)
             throw std::invalid_argument("Clear color must be in [0,1]");
     const auto &data = SnapshotAccess::get(snapshot);
-    const auto camera = std::find_if(data.cameras.begin(), data.cameras.end(),
+    const auto camera = std::find_if(data.scene().cameras.begin(), data.scene().cameras.end(),
                                      [&](const auto &c) { return c.node == view.cameraNode; });
-    if (camera == data.cameras.end())
+    if (camera == data.scene().cameras.end())
         throw std::invalid_argument("Camera is absent or hidden in snapshot");
     // 相机节点保存相机到世界的变换，渲染需要它的逆矩阵作为视图矩阵。
     const auto inverse = camera->world.inverse();
@@ -36,6 +36,7 @@ PreparedFrame prepareFrame(const RenderSnapshot &snapshot, const RenderView &vie
     PreparedFrame frame;
     frame.transparency = view.transparency;
     frame.antiAliasing = view.antiAliasing;
+    frame.overlay = view.overlay;
     const auto &cameraData = camera->camera;
     const auto projection = cameraProjection(cameraData, width, height);
     frame.uniforms.viewProjection = projection * (*inverse);
@@ -60,7 +61,7 @@ PreparedFrame prepareFrame(const RenderSnapshot &snapshot, const RenderView &vie
     frame.uniforms.cameraPosition = {eye.x, eye.y, eye.z, 1};
     Vec3 direction = normalized(view.lightDirection);
     int shadowLight = -1;
-    for (const auto &source : data.lights) {
+    for (const auto &source : data.scene().lights) {
         if (frame.lights.size() >= 64)
             throw std::length_error("This lighting profile supports 64 lights per view");
         const auto p = source.world.transformPoint({0, 0, 0});
@@ -84,9 +85,15 @@ PreparedFrame prepareFrame(const RenderSnapshot &snapshot, const RenderView &vie
     frame.shadows = view.shadows && shadowLight >= 0;
     frame.shadowResolution = view.shadowResolution;
     frame.uniforms.lightDirection = {direction.x, direction.y, direction.z, 0};
-    frame.uniforms.ambient = {view.ambientLight, 0, 0, 0};
+    if (!std::isfinite(view.timeSeconds))
+        throw std::invalid_argument("Invalid effect time");
+    frame.uniforms.ambient = {view.ambientLight, view.timeSeconds, 0, 0};
     frame.uniforms.postParameters = {view.exposure, static_cast<float>(view.toneMapping), 0, 0};
     frame.uniforms.counts = {static_cast<float>(frame.lights.size()), 0, 0, 0};
+    if (const auto [w, h] = frame.overlay.size(); w && h) {
+        frame.uniforms.counts.y = 2.f / float(w);
+        frame.uniforms.counts.z = 2.f / float(h);
+    }
     frame.uniforms.shadowParameters = {frame.shadows ? 1.0f : 0.0f, static_cast<float>(shadowLight),
                                        1.0f / static_cast<float>(view.shadowResolution), 0.0008f};
     frame.uniforms.lightViewProjection = Mat4::identity();
@@ -95,7 +102,7 @@ PreparedFrame prepareFrame(const RenderSnapshot &snapshot, const RenderView &vie
         throw std::length_error("Too many instances");
     frame.stats.sceneInstances = static_cast<uint32_t>(snapshot.instanceCount());
     std::vector<InstanceRecord> spriteInstances;
-    spriteInstances.reserve(data.sprites.size() + data.batchSpriteCount);
+    spriteInstances.reserve(data.scene().sprites.size() + data.batchSpriteCount);
     const Frustum frustum(frame.uniforms.viewProjection);
     const auto appendSprite = [&](const SpriteRecord &s) {
         const auto geometry = spriteGeometry(s, camera->world);
@@ -118,25 +125,53 @@ PreparedFrame prepareFrame(const RenderSnapshot &snapshot, const RenderView &vie
         instance.tint = c.tint;
         instance.colorOverlay = c.colorOverlay;
         instance.outlineColor = c.outlineColor;
-        instance.effects = {c.outlineWidth, 0, 0, 0};
+        instance.effects = {c.outlineWidth, s.sprite->description.distanceFieldRange,
+                            c.edgeSoftness, 0};
+        const auto layer =
+            c.textureLayer == UINT32_MAX ? s.sprite->description.textureLayer : c.textureLayer;
+        if (layer >= s.sprite->material->texture->description.layers)
+            throw std::invalid_argument("Sprite array layer out of bounds");
+        instance.textureLayer = float(layer);
         instance.spriteSort = s.sort;
         instance.orderedSprite = c.transparency == SpriteTransparency::Sorted;
+        instance.depthTest = c.depthTest;
         spriteInstances.push_back(std::move(instance));
     };
-    for (const auto &s : data.sprites)
-        appendSprite(s);
+    const bool indexed =
+        view.spatialCulling && data.scene().indexed && view.frustumCulling && !frame.shadows;
+    const auto intersectsView = [&](const AABB &b) { return frustum.intersects(b); };
+    if (indexed) {
+        auto ids = data.scene().spriteIndex.query(intersectsView);
+        frame.stats.culledInstances += uint32_t(data.scene().sprites.size() - ids.size());
+        for (auto i : ids)
+            appendSprite(data.scene().sprites[i]);
+    } else
+        for (const auto &s : data.scene().sprites)
+            appendSprite(s);
     for (const auto &batch : data.batches) {
         if (view.frustumCulling && !frame.shadows && !frustum.intersects(batch->bounds)) {
             frame.stats.culledInstances += uint32_t(batch->sprites.size());
             continue;
         }
-        for (const auto &s : batch->sprites)
-            appendSprite(s);
+        if (indexed) {
+            auto ids = batch->index.query(intersectsView);
+            frame.stats.culledInstances += uint32_t(batch->sprites.size() - ids.size());
+            for (auto i : ids)
+                appendSprite(batch->sprites[i]);
+        } else
+            for (const auto &s : batch->sprites)
+                appendSprite(s);
     }
     std::vector<const InstanceRecord *> instances;
-    instances.reserve(data.instances.size() + spriteInstances.size());
-    for (const auto &i : data.instances)
-        instances.push_back(&i);
+    instances.reserve(data.scene().instances.size() + spriteInstances.size());
+    if (indexed) {
+        auto ids = data.scene().meshIndex.query(intersectsView);
+        frame.stats.culledInstances += uint32_t(data.scene().instances.size() - ids.size());
+        for (auto i : ids)
+            instances.push_back(&data.scene().instances[i]);
+    } else
+        for (const auto &i : data.scene().instances)
+            instances.push_back(&i);
     for (const auto &i : spriteInstances)
         instances.push_back(&i);
 
@@ -146,18 +181,27 @@ PreparedFrame prepareFrame(const RenderSnapshot &snapshot, const RenderView &vie
         float depth;
         SpriteSort sort;
     };
-    std::vector<Item> opaque, transparent, orderedSprites, casters;
+    std::vector<Item> opaque, transparent, orderedSprites, unoccludedSprites, casters;
     bool hasCaster = false;
     AABB casterBounds{};
     for (const auto *source : instances) {
         const auto &instance = *source;
+        auto bounds = instance.bounds;
+        float padding = 0;
+        for (const auto &m : instance.materials)
+            padding = std::max(padding, m->description.effect.boundsPadding);
+        const Vec3 extent{padding, padding, padding};
+        bounds.minimum = bounds.minimum - extent;
+        bounds.maximum = bounds.maximum + extent;
+        if (!finite(bounds.minimum) || !finite(bounds.maximum))
+            throw std::overflow_error("Effect bounds overflow");
         const bool visible = (instance.layerMask & camera->camera.cullingMask) != 0 &&
-                             (!view.frustumCulling || frustum.intersects(instance.bounds));
+                             (!view.frustumCulling || frustum.intersects(bounds));
         if (visible)
             ++frame.stats.visibleInstances;
         else
             ++frame.stats.culledInstances;
-        const Vec3 center = (instance.bounds.minimum + instance.bounds.maximum) * 0.5f;
+        const Vec3 center = (bounds.minimum + bounds.maximum) * 0.5f;
         const auto sort = instance.spriteSort.value_or(
             SpriteSort{0, 0, 0, center, instance.node.index, instance.node.generation});
         const float depth = -inverse->transformPoint(sort.point).z;
@@ -167,9 +211,12 @@ PreparedFrame prepareFrame(const RenderSnapshot &snapshot, const RenderView &vie
                 *instance.materials[instance.mesh->description.submeshes[submesh].materialSlot];
             const Item item{&instance, submesh, depth, sort};
             if (visible) {
-                if (material.description.alphaMode != AlphaMode::Blend)
+                if (!instance.depthTest)
+                    unoccludedSprites.push_back(item);
+                else if (material.description.alphaMode != AlphaMode::Blend)
                     opaque.push_back(item);
-                else if (instance.orderedSprite &&
+                else if ((instance.orderedSprite ||
+                          material.description.blend == MaterialBlend::Additive) &&
                          view.transparency == TransparencyMode::WeightedBlendedOIT)
                     orderedSprites.push_back(item);
                 else
@@ -180,17 +227,15 @@ PreparedFrame prepareFrame(const RenderSnapshot &snapshot, const RenderView &vie
                 instance.castShadow && material.description.alphaMode != AlphaMode::Blend) {
                 casters.push_back(item);
                 if (!hasCaster) {
-                    casterBounds = instance.bounds;
+                    casterBounds = bounds;
                     hasCaster = true;
                 } else {
-                    casterBounds.minimum = {
-                        std::min(casterBounds.minimum.x, instance.bounds.minimum.x),
-                        std::min(casterBounds.minimum.y, instance.bounds.minimum.y),
-                        std::min(casterBounds.minimum.z, instance.bounds.minimum.z)};
-                    casterBounds.maximum = {
-                        std::max(casterBounds.maximum.x, instance.bounds.maximum.x),
-                        std::max(casterBounds.maximum.y, instance.bounds.maximum.y),
-                        std::max(casterBounds.maximum.z, instance.bounds.maximum.z)};
+                    casterBounds.minimum = {std::min(casterBounds.minimum.x, bounds.minimum.x),
+                                            std::min(casterBounds.minimum.y, bounds.minimum.y),
+                                            std::min(casterBounds.minimum.z, bounds.minimum.z)};
+                    casterBounds.maximum = {std::max(casterBounds.maximum.x, bounds.maximum.x),
+                                            std::max(casterBounds.maximum.y, bounds.maximum.y),
+                                            std::max(casterBounds.maximum.z, bounds.maximum.z)};
                 }
             }
         }
@@ -218,7 +263,7 @@ PreparedFrame prepareFrame(const RenderSnapshot &snapshot, const RenderView &vie
     const auto key = [](const Item &item) {
         const auto &i = *item.instance;
         return std::tuple{i.materials[i.mesh->description.submeshes[item.submesh].materialSlot]->id,
-                          i.mesh->id, item.submesh, i.mirrored};
+                          i.mesh->id, item.submesh, i.mirrored, i.depthTest};
     };
     // 排序 Alpha 保持从远到近；加权 OIT 的累积可交换，允许直接按状态聚类合批。
     std::sort(opaque.begin(), opaque.end(), [&](auto &a, auto &b) { return key(a) < key(b); });
@@ -233,6 +278,9 @@ PreparedFrame prepareFrame(const RenderSnapshot &snapshot, const RenderView &vie
         return spriteSortLess(a.sort, a.depth, b.sort, b.depth);
     });
     std::sort(casters.begin(), casters.end(), [&](auto &a, auto &b) { return key(a) < key(b); });
+    std::stable_sort(unoccludedSprites.begin(), unoccludedSprites.end(), [](auto &a, auto &b) {
+        return spriteSortLess(a.sort, a.depth, b.sort, b.depth);
+    });
     const auto append = [&](const std::vector<Item> &items, std::vector<DrawBatch> &batches,
                             bool shadow) {
         for (size_t i = 0; i < items.size(); ++i) {
@@ -245,11 +293,13 @@ PreparedFrame prepareFrame(const RenderSnapshot &snapshot, const RenderView &vie
             if (i == 0 || key(item) != key(items[i - 1]))
                 batches.push_back({instance.mesh, instance.materials[submesh.materialSlot],
                                    item.submesh, instance.mirrored,
-                                   static_cast<uint32_t>(frame.instances.size()), 0});
+                                   static_cast<uint32_t>(frame.instances.size()), 0,
+                                   instance.depthTest});
             ++batches.back().instanceCount;
             frame.instances.push_back({instance.world,
                                        instance.normal,
-                                       {instance.receiveShadow ? 1.0f : 0.0f, 0, 0, 0},
+                                       {instance.receiveShadow ? 1.0f : 0.0f, instance.textureLayer,
+                                        instance.textureLayer >= 0 ? 1.f : 0.f, 0},
                                        instance.uvRect,
                                        instance.tint,
                                        instance.colorOverlay,
@@ -263,11 +313,14 @@ PreparedFrame prepareFrame(const RenderSnapshot &snapshot, const RenderView &vie
     const auto opaqueBatches = frame.batches.size();
     append(transparent, frame.batches, false);
     append(orderedSprites, frame.orderedSpriteBatches, false);
+    append(unoccludedSprites, frame.unoccludedSpriteBatches, false);
     frame.stats.transparentDrawCalls = static_cast<uint32_t>(frame.batches.size() - opaqueBatches +
-                                                             frame.orderedSpriteBatches.size());
+                                                             frame.orderedSpriteBatches.size() +
+                                                             frame.unoccludedSpriteBatches.size());
     append(casters, frame.shadowBatches, true);
     frame.stats.sceneDrawCalls = frame.stats.drawCalls =
-        static_cast<uint32_t>(frame.batches.size() + frame.orderedSpriteBatches.size());
+        static_cast<uint32_t>(frame.batches.size() + frame.orderedSpriteBatches.size() +
+                              frame.unoccludedSpriteBatches.size());
     frame.stats.shadowDrawCalls = static_cast<uint32_t>(frame.shadowBatches.size());
     frame.stats.prepareMilliseconds =
         std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();

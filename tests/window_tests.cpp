@@ -1,4 +1,13 @@
+#ifdef _WIN32
+#define NOMINMAX
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#define GLFW_EXPOSE_NATIVE_WIN32
+#endif
 #include "internal/window.hpp"
+#ifdef _WIN32
+#include <GLFW/glfw3native.h>
+#endif
 #include "renderer/renderer.hpp"
 #include <future>
 #include <iostream>
@@ -215,6 +224,35 @@ int main() {
             require(!window && !close.connected() && !after.connected() && remaining == 0,
                     "Window destruction inside a callback kept later listeners active");
         }
+#ifdef _WIN32
+        {
+            Window window({.width = 160, .height = 120, .visible = false});
+            window.pollEvents();
+            std::vector<TextCompositionEvent> events;
+            auto subscription =
+                window.subscribe<TextCompositionEvent>([&](const auto &e) { events.push_back(e); });
+            auto state = detail::WindowAccess::state(window);
+            auto hwnd = glfwGetWin32Window(state->native);
+            window.setTextInputArea({true, 12, 20, 100, 30});
+            SendMessageW(hwnd, WM_IME_STARTCOMPOSITION, 0, 0);
+            SendMessageW(hwnd, WM_IME_ENDCOMPOSITION, 0, 0);
+            require(events.empty(), "Native IME handler directly dispatched callbacks");
+            window.pollEvents();
+            require(events.size() == 2 && events.front().phase == CompositionPhase::Begin &&
+                        events.back().phase == CompositionPhase::End,
+                    "Native composition lifecycle missing");
+            window.setTextInputArea({});
+            auto wrong = std::async(std::launch::async, [&] {
+                try {
+                    window.setTextInputArea({});
+                    return false;
+                } catch (const std::logic_error &) {
+                    return true;
+                }
+            });
+            require(wrong.get(), "IME area accepted wrong thread");
+        }
+#endif
         std::cout << "PASS native event adapters, typed subscriptions, resize, cancellation, "
                      "exceptions, moves, thread ownership and context lifetime\n";
         return 0;

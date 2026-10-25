@@ -50,6 +50,9 @@ size_t SpriteAtlas::size() const {
 }
 namespace detail {
 void validateSprite(const SpriteRenderer &c) {
+    if (!std::isfinite(c.edgeSoftness) || c.edgeSoftness < .25f || c.edgeSoftness > 4)
+        throw std::invalid_argument("Invalid SDF edge softness");
+
     if (!c.sprite || !finite(c.sortOffset) ||
         (c.billboard != BillboardMode::Fixed && c.billboard != BillboardMode::Upright &&
          c.billboard != BillboardMode::ViewPlane) ||
@@ -85,6 +88,8 @@ Mat4 cameraProjection(const Camera &camera, uint32_t width, uint32_t height) {
                                     camera.farPlane);
 }
 std::optional<SpriteGeometry> spriteGeometry(const SpriteRecord &record, const Mat4 &cameraWorld) {
+    if (record.fixedGeometry)
+        return *record.fixedGeometry;
     const auto &d = record.sprite->description;
     const auto &c = record.component;
     const float w = float(d.rect.width) / d.pixelsPerUnit * c.sizeMultiplier.x;
@@ -148,6 +153,39 @@ std::optional<SpriteGeometry> spriteGeometry(const SpriteRecord &record, const M
     }
     return SpriteGeometry{world, inverse->transposed(), uv,
                           record.sprite->mesh->bounds.transformed(world)};
+}
+AABB conservativeSpriteBounds(const SpriteRecord &record) {
+    const auto &d = record.sprite->description;
+    const auto &c = record.component;
+    const auto anchor = record.world.transformPoint({});
+    // 固定图片使用精确几何包围盒；Billboard 的朝向随相机改变，使用旋转不变的球界。
+    const float x =
+        std::max(std::abs(d.trimOffset.x - d.pivot.x * d.originalSize.x),
+                 std::abs(d.trimOffset.x + float(d.rect.width) - d.pivot.x * d.originalSize.x)) *
+        c.sizeMultiplier.x / d.pixelsPerUnit;
+    const float y =
+        std::max(std::abs(d.trimOffset.y - d.pivot.y * d.originalSize.y),
+                 std::abs(d.trimOffset.y + float(d.rect.height) - d.pivot.y * d.originalSize.y)) *
+        c.sizeMultiplier.y / d.pixelsPerUnit;
+    float scale = 0;
+    for (int column = 0; column < 2; ++column)
+        scale = std::max(scale, std::hypot(record.world(0, column), record.world(1, column),
+                                           record.world(2, column)));
+    const float radius = scale * std::hypot(x, y);
+    if (!std::isfinite(radius))
+        throw std::invalid_argument("Batch bounds overflow");
+    AABB bound{anchor - Vec3{radius, radius, radius}, anchor + Vec3{radius, radius, radius}};
+    if (c.billboard == BillboardMode::Fixed) {
+        const auto geometry = detail::spriteGeometry(record, Mat4::identity());
+        if (geometry)
+            bound = geometry->bounds;
+    }
+    const float padding = record.sprite->material->description.effect.boundsPadding;
+    bound.minimum = bound.minimum - Vec3{padding, padding, padding};
+    bound.maximum = bound.maximum + Vec3{padding, padding, padding};
+    if (!finite(bound.minimum) || !finite(bound.maximum))
+        throw std::invalid_argument("Batch bounds overflow");
+    return bound;
 }
 bool spriteSortLess(const SpriteSort &a, float depthA, const SpriteSort &b, float depthB) {
     return std::tuple{a.layer, a.order, -depthA, a.groupIndex, a.groupGeneration, a.memberOrder} <

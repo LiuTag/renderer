@@ -121,4 +121,4 @@ auto closing = window.subscribe<renderer::WindowCloseEvent>([&](const auto &) {
 - `tests/event_tests.cpp`：8 组无显示环境测试，覆盖顺序、数据所有权、取消、移动、异常、重入和跨线程取消。
 - `tests/window_tests.cpp`：隐藏真实窗口，覆盖原生回调适配、真实 resize、关闭取消、错误线程、移动、回调中销毁窗口及渲染线程保留上下文。
 
-输入测试通过调用已安装的原生回调确定性注入参数，不向桌面发送键鼠输入；resize 使用真实窗口操作。公开事件系统尚未封装相机控制器、输入法组合编辑或鼠标捕获模式。
+输入测试通过调用已安装的原生回调确定性注入参数，不向桌面发送键鼠输入；resize 使用真实窗口操作。公开事件系统已提供 TextCompositionEvent；Windows 的原生组合生命周期只排队，在 pollEvents 分派。setTextInputArea 接收 UI 编辑区域并定位候选窗口；clipboardText/setClipboardText 提供系统剪贴板。相机控制器由独立 camera 模块接收应用映射的输入；鼠标捕获模式尚未封装。

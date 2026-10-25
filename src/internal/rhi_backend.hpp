@@ -15,6 +15,14 @@ namespace renderer::rhi::detail {
  */
 class DeviceBackend {
   public:
+    UploadStatistics uploadStats;
+    virtual void beginUploadBatch() = 0;
+    virtual CompletionToken endUploadBatch() = 0;
+    virtual void uploadRegion(TextureHandle, TextureRegion, std::span<const uint8_t>, uint32_t,
+                              uint32_t) = 0;
+    virtual void copyTexture(TextureHandle a, TextureHandle b, const TextureCopy &r) {
+        (void)submit({detail::CopyTexture{a, b, r}});
+    }
     /**
      * @brief 在设备线程销毁具体后端。
      * @return 无（析构函数）。
@@ -53,7 +61,8 @@ class DeviceBackend {
      * @return 独立管理生命周期的新纹理视图句柄。
      */
     virtual TextureHandle createTextureView(TextureHandle texture, uint32_t firstMip,
-                                            uint32_t mipCount) = 0;
+                                            uint32_t mipCount, uint32_t firstLayer,
+                                            uint32_t layerCount, bool arrayView) = 0;
     /**
      * @brief 创建不可变纹理采样器。
      * @param description 过滤、寻址、mip 与深度比较设置。
@@ -143,8 +152,8 @@ class DeviceBackend {
      * @param mipLevel 相对于纹理或视图的 mip 下标。
      * @return 无。
      */
-    virtual void upload(TextureHandle texture, std::span<const uint8_t> rgba8,
-                        uint32_t mipLevel) = 0;
+    virtual void upload(TextureHandle texture, std::span<const uint8_t> rgba8, uint32_t mipLevel,
+                        uint32_t layer) = 0;
     /**
      * @brief 由基准层内容生成其余 mip 层。
      * @param texture 已分配多个 mip 且已初始化基准层的纹理。
@@ -164,7 +173,7 @@ class DeviceBackend {
      * @param texture 要回读的有效纹理或视图。
      * @return 左上原点的 RGBA8 图像。
      */
-    virtual RgbaImage readTexture(TextureHandle texture) = 0;
+    virtual RgbaImage readTexture(TextureHandle texture, uint32_t layer) = 0;
     /**
      * @brief 在设备线程验证并回放命令，GPU 可异步执行。
      * @param commands 按顺序回放的已验证命令记录，引用的资源必须仍有效。

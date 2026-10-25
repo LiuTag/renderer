@@ -45,7 +45,7 @@ struct LightGpu {
  * @brief 上传给 GPU 的基础颜色、PBR 因子与自发光参数。
  */
 struct MaterialGpu {
-    Vec4 baseColor, factors, emissive, misc;
+    Vec4 baseColor, factors, emissive, misc, effectParameters, textureParameters, auxiliaryOrigins;
 };
 /**
  * @brief 共享网格、材质、子网格和镜像状态的一段连续实例绘制批次。
@@ -56,6 +56,7 @@ struct DrawBatch {
     uint32_t submesh;
     bool mirrored;
     uint32_t firstInstance, instanceCount;
+    bool depthTest = true;
 };
 /**
  * @brief 帧准备阶段生成的 uniform、实例、灯光、场景/阴影批次与统计。
@@ -65,7 +66,8 @@ struct PreparedFrame {
     std::vector<InstanceGpu> instances;
     std::vector<DrawBatch> batches;
     std::vector<DrawBatch> shadowBatches;
-    std::vector<DrawBatch> orderedSpriteBatches; // OIT 合成后单独排序的精灵；常规模式混排。
+    std::vector<DrawBatch> orderedSpriteBatches;    // OIT 合成后单独排序的精灵；常规模式混排。
+    std::vector<DrawBatch> unoccludedSpriteBatches; // 关闭深度的世界标签，始终保持透明绘制顺序。
     std::vector<LightGpu> lights;
     Vec4 clearColor;
     RenderStats stats;
@@ -73,6 +75,7 @@ struct PreparedFrame {
     uint32_t shadowResolution = 1024;
     TransparencyMode transparency = TransparencyMode::SortedAlpha;
     AntiAliasing antiAliasing = AntiAliasing::None;
+    OverlaySnapshot overlay;
 };
 /**
  * @brief 从不可变快照生成裁剪、排序、合批、光照和阴影用的 CPU 帧数据。

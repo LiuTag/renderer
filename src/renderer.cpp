@@ -21,23 +21,25 @@ RenderSnapshot &RenderSnapshot::operator=(const RenderSnapshot &) = default;
 RenderSnapshot::RenderSnapshot(RenderSnapshot &&) noexcept = default;
 RenderSnapshot &RenderSnapshot::operator=(RenderSnapshot &&) noexcept = default;
 size_t RenderSnapshot::instanceCount() const {
-    return impl_ ? impl_->instances.size() + impl_->sprites.size() + impl_->batchSpriteCount : 0;
+    return impl_ ? impl_->scene().instances.size() + impl_->scene().sprites.size() +
+                       impl_->batchSpriteCount
+                 : 0;
 }
 size_t RenderSnapshot::spriteCount() const {
-    return impl_ ? impl_->sprites.size() + impl_->batchSpriteCount : 0;
+    return impl_ ? impl_->scene().sprites.size() + impl_->batchSpriteCount : 0;
 }
 size_t RenderSnapshot::cameraCount() const {
-    return impl_ ? impl_->cameras.size() : 0;
+    return impl_ ? impl_->scene().cameras.size() : 0;
 }
 uint64_t RenderSnapshot::revision() const {
     return impl_ ? impl_->revision : 0;
 }
 std::optional<Mat4> RenderSnapshot::instanceTransform(NodeHandle h) const {
     if (impl_) {
-        for (const auto &i : impl_->instances)
+        for (const auto &i : impl_->scene().instances)
             if (i.node == h)
                 return i.world;
-        for (const auto &s : impl_->sprites)
+        for (const auto &s : impl_->scene().sprites)
             if (s.node == h)
                 return s.world;
     }
@@ -50,12 +52,32 @@ struct RenderExtractor::Impl {
         Mat4 normal;
         AABB bounds;
         bool invertible = false;
+        uint64_t spriteWorldVersion = 0;
+        SpriteRenderer spriteComponent{};
+        AABB spriteBounds;
+        std::shared_ptr<const detail::SpriteGeometry> fixedGeometry;
     };
     uint64_t owner = 0, extraction = 0;
+    bool caching = true, spatialEnabled = true;
+    std::pair<uint64_t, uint64_t> assetsStamp{};
+    std::shared_ptr<const RenderSnapshot::Impl> cachedScene;
+
     std::unordered_map<uint32_t, SpatialCache> spatial;
 };
 RenderExtractor::RenderExtractor() : impl_(std::make_unique<Impl>()) {}
+void RenderExtractor::setCachingEnabled(bool enabled) {
+    impl_->caching = enabled;
+    impl_->cachedScene.reset();
+}
+void RenderExtractor::setSpatialIndexEnabled(bool enabled) {
+    impl_->spatialEnabled = enabled;
+    impl_->cachedScene.reset();
+}
 RenderExtractor::~RenderExtractor() = default;
+void RenderExtractor::clearCache() {
+    impl_->cachedScene.reset();
+    impl_->spatial.clear();
+}
 RenderExtractor::RenderExtractor(RenderExtractor &&) noexcept = default;
 RenderExtractor &RenderExtractor::operator=(RenderExtractor &&) noexcept = default;
 RenderSnapshot RenderExtractor::extract(Scene &scene, const AssetStore &assets) {
@@ -67,16 +89,38 @@ RenderSnapshot RenderExtractor::extract(Scene &scene, const AssetStore &assets,
     // 提取器可被不同场景复用，但索引相同的节点不能共享上一场景的空间缓存。
     if (impl_->owner != scene.root().owner) {
         impl_->spatial.clear();
+        impl_->cachedScene.reset();
         impl_->owner = scene.root().owner;
     }
     ++impl_->extraction;
+    const auto stamp = detail::AssetAccess::stamp(assets);
+    auto publish = [&](std::shared_ptr<const RenderSnapshot::Impl> base) {
+        auto wrapper = std::make_shared<RenderSnapshot::Impl>();
+        wrapper->revision = base->revision;
+        wrapper->sourceScene = std::move(base);
+        for (const auto &batch : batches)
+            if (auto part = detail::SpriteBatchAccess::data(batch)) {
+                wrapper->batchSpriteCount += part->sprites.size();
+                wrapper->batches.push_back(std::move(part));
+            }
+        RenderSnapshot result;
+        result.impl_ = std::move(wrapper);
+        return result;
+    };
+    if (impl_->caching && impl_->cachedScene && impl_->cachedScene->revision == scene.revision() &&
+        impl_->assetsStamp == stamp)
+        return publish(impl_->cachedScene);
+    auto previous =
+        std::move(impl_->cachedScene); // 异常退出后局部引用随栈释放，不在缓存中保留旧包。
     auto data = std::make_shared<RenderSnapshot::Impl>();
     data->revision = scene.revision();
-    for (const auto &batch : batches)
-        if (auto dataBatch = detail::SpriteBatchAccess::data(batch)) {
-            data->batchSpriteCount += dataBatch->sprites.size();
-            data->batches.push_back(std::move(dataBatch));
-        }
+    if (previous) {
+        data->sprites.reserve(previous->sprites.size());
+        data->instances.reserve(previous->instances.size());
+        data->cameras.reserve(previous->cameras.size());
+        data->lights.reserve(previous->lights.size());
+    }
+
     struct Group {
         NodeHandle node;
         SortingGroup component;
@@ -116,6 +160,35 @@ RenderSnapshot RenderExtractor::extract(Scene &scene, const AssetStore &assets,
                 throw std::overflow_error("Sprite sort point overflow");
             data->sprites.push_back(
                 {h, detail::AssetAccess::sprite(assets, c.sprite), c, n.world, sort});
+            auto &record = data->sprites.back();
+            const auto layer = c.textureLayer == UINT32_MAX
+                                   ? record.sprite->description.textureLayer
+                                   : c.textureLayer;
+            if (layer >= record.sprite->material->texture->description.layers)
+                throw std::invalid_argument("Sprite array layer out of bounds");
+            if (impl_->caching || impl_->spatialEnabled) {
+                auto &cache = impl_->spatial[h.index];
+                const auto &old = cache.spriteComponent;
+                if (cache.node != h || cache.spriteWorldVersion != n.worldVersion ||
+                    old.sprite != c.sprite || old.billboard != c.billboard ||
+                    old.rotation != c.rotation || old.sizeMultiplier.x != c.sizeMultiplier.x ||
+                    old.sizeMultiplier.y != c.sizeMultiplier.y || old.flipX != c.flipX ||
+                    old.flipY != c.flipY) {
+                    cache.node = h;
+                    cache.spriteWorldVersion = n.worldVersion;
+                    cache.spriteComponent = c;
+                    cache.fixedGeometry.reset();
+                    if (c.billboard == BillboardMode::Fixed)
+                        if (auto geometry = detail::spriteGeometry(record, Mat4::identity()))
+                            cache.fixedGeometry =
+                                std::make_shared<const detail::SpriteGeometry>(*geometry);
+                    record.fixedGeometry = cache.fixedGeometry;
+                    cache.spriteBounds = detail::conservativeSpriteBounds(record);
+                }
+                cache.seen = impl_->extraction;
+                record.fixedGeometry = cache.fixedGeometry;
+                record.bounds = cache.spriteBounds;
+            }
         }
         if (!n.meshRenderer)
             continue;
@@ -151,9 +224,57 @@ RenderSnapshot RenderExtractor::extract(Scene &scene, const AssetStore &assets,
     }
     std::erase_if(impl_->spatial,
                   [&](const auto &pair) { return pair.second.seen != impl_->extraction; });
-    RenderSnapshot snapshot;
-    snapshot.impl_ = std::move(data);
-    return snapshot;
+    data->indexed = impl_->spatialEnabled;
+    if (data->indexed) {
+        std::vector<AABB> boxes;
+        boxes.reserve(data->sprites.size());
+        for (const auto &r : data->sprites)
+            boxes.push_back(r.bounds);
+        bool sameSprites = previous && previous->indexed &&
+                           previous->sprites.size() == data->sprites.size() &&
+                           impl_->extraction % 64 != 0;
+        if (sameSprites)
+            for (size_t i = 0; i < data->sprites.size(); ++i)
+                if (previous->sprites[i].node != data->sprites[i].node) {
+                    sameSprites = false;
+                    break;
+                }
+        if (sameSprites) {
+            data->spriteIndex = previous->spriteIndex;
+            data->spriteIndex.refit(boxes);
+        } else
+            data->spriteIndex.reset(boxes);
+        boxes.clear();
+        for (const auto &r : data->instances) {
+            auto b = r.bounds;
+            float padding = 0;
+            for (const auto &m : r.materials)
+                padding = std::max(padding, m->description.effect.boundsPadding);
+            b.minimum = b.minimum - Vec3{padding, padding, padding};
+            b.maximum = b.maximum + Vec3{padding, padding, padding};
+            if (!finite(b.minimum) || !finite(b.maximum))
+                throw std::overflow_error("Effect bounds overflow");
+            boxes.push_back(b);
+        }
+        bool sameMeshes = previous && previous->indexed &&
+                          previous->instances.size() == data->instances.size() &&
+                          impl_->extraction % 64 != 0;
+        if (sameMeshes)
+            for (size_t i = 0; i < data->instances.size(); ++i)
+                if (previous->instances[i].node != data->instances[i].node) {
+                    sameMeshes = false;
+                    break;
+                }
+        if (sameMeshes) {
+            data->meshIndex = previous->meshIndex;
+            data->meshIndex.refit(boxes);
+        } else
+            data->meshIndex.reset(boxes);
+    }
+    impl_->assetsStamp = stamp;
+    if (impl_->caching)
+        impl_->cachedScene = data;
+    return publish(std::move(data));
 }
 
 void Image::savePpm(const std::string &path) const {
@@ -192,6 +313,23 @@ std::future<RenderStats> Renderer::submit(RenderSnapshot snapshot, RenderView vi
 }
 DeviceInfo Renderer::deviceInfo() const {
     return impl_->enqueue([&] { return impl_->backend->deviceInfo(); }).get();
+}
+RendererMemoryStats Renderer::memoryStatistics() const {
+    return impl_->enqueue([&] { return impl_->backend->memoryStatistics(); }).get();
+}
+RenderTexture Renderer::createRenderTexture(const OffscreenConfig &target) {
+    return impl_->enqueue([&] { return impl_->backend->createRenderTexture(target); }).get();
+}
+RenderStats Renderer::renderToTexture(const RenderSnapshot &snapshot, const RenderView &view,
+                                      const RenderTexture &target) {
+    const auto [w, h] = target.size();
+    if (!target)
+        throw std::invalid_argument("Invalid render texture");
+    return impl_
+        ->enqueue([backend = impl_->backend.get(), snapshot, view, target, w, h] {
+            return backend->drawToTexture(detail::prepareFrame(snapshot, view, w, h), target);
+        })
+        .get();
 }
 uint32_t Renderer::debugErrorCount() const {
     return impl_->backend->debugErrorCount();

@@ -7,6 +7,7 @@
 #include "assets.hpp"
 #include "renderer/scene.hpp"
 #include "renderer/sprite.hpp"
+#include <optional>
 
 namespace renderer::detail {
 struct SpriteData {
@@ -20,6 +21,11 @@ struct SpriteSort {
     uint32_t groupIndex = 0;
     uint64_t groupGeneration = 0;
 };
+struct SpriteGeometry {
+    Mat4 world, normal;
+    Vec4 uvRect;
+    AABB bounds;
+};
 struct SpriteRecord {
     NodeHandle node;
     std::shared_ptr<const SpriteData> sprite;
@@ -27,16 +33,14 @@ struct SpriteRecord {
     Mat4 world;
     SpriteSort sort;
     uint64_t instanceId = 0;
-};
-struct SpriteGeometry {
-    Mat4 world, normal;
-    Vec4 uvRect;
-    AABB bounds;
+    std::shared_ptr<const SpriteGeometry> fixedGeometry;
+    AABB bounds; ///< 相机无关且已包含材质位移余量的保守界限。
 };
 // 以实际主相机计算一次几何，阴影与拾取复用同一结果，不能使用光源相机重转图片。
 std::optional<SpriteGeometry> spriteGeometry(const SpriteRecord &record, const Mat4 &cameraWorld);
 Mat4 cameraProjection(const Camera &camera, uint32_t width, uint32_t height);
 bool spriteSortLess(const SpriteSort &a, float depthA, const SpriteSort &b, float depthB);
 void validateSprite(const SpriteRenderer &sprite);
+AABB conservativeSpriteBounds(const SpriteRecord &sprite);
 } // namespace renderer::detail
 #endif // RENDERER_SRC_INTERNAL_SPRITE_HPP_INCLUDED

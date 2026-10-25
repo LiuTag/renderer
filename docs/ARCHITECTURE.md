@@ -32,15 +32,19 @@ flowchart TD
 
 `renderer::audio` 同样是独立可选扩展，仅使用 core 的公共数学及句柄类型。miniaudio 隐藏在 PImpl 实现中，设备混音使用独立音频时钟，流式任务后台补页；应用线程负责控制、回收及取得结束事件。渲染、动画和音频之间通过应用传递位置及玩法事件，详见[音频说明](AUDIO.md)。
 
-九个可选扩展为 animation、interaction、audio、tilemap、collision、particles、environment、presentation 和 physics2d；它们之间没有强制链接依赖，core 与图形后端不反向依赖扩展。物理和流式任务完成后由应用消费结果，再更新场景、批次和视图。
+十二个可选扩展为 animation、interaction、audio、tilemap、collision、particles、environment、presentation、physics2d、camera、ui 和 text；它们之间没有强制链接依赖，core 与图形后端不反向依赖扩展。物理和流式任务完成后由应用消费结果，再更新场景、批次和视图。
 
 ## 应用更新与一帧流程
 
+`renderer::camera` 封装可复用的相机计算，应用保留输入映射和目标选择。在物理/角色位置更新后调用 setTarget、update、apply，再提取快照；控制器写入世界姿态对应的局部矩阵及投影/镜头值，处理父节点变换，保留裁剪面、宽高比和剔除掩码。它不订阅窗口事件，也不创建线程，详见[相机控制](CAMERA.md)。
+
 1. 有窗口时在创建线程处理输入；应用推进固定步物理、动画、地图流式发布、粒子及昼夜天气。音频按独立混音时钟工作。
-2. 物理位置同步到 Scene，地图和粒子发布 SpriteBatch，环境模块更新灯光/RenderView。需要遮挡淡出时先提取几何快照，调用 presentation 后再提取最终快照。
+2. 物理位置同步到 Scene，相机控制器更新并写回相机节点；地图和粒子发布 SpriteBatch，环境模块更新灯光/RenderView。需要遮挡淡出时先提取几何快照，调用 presentation 后再提取最终快照。
 3. RenderExtractor 更新派生变换并生成不可变快照；提交后应用可以继续更新原场景。renderThread 开启时，帧准备和设备操作在专用线程执行。
 4. prepareFrame 选择相机与灯光、展开 Billboard、裁剪、排序并形成实例批次。后端复用帧槽和 GPU 缓存，执行共用渲染图。
 5. 窗口模式调用 Renderer::present() 呈现；离屏模式可用 renderToImage() 同步取得本快照的 Image，再保存 PNG。
+
+ui 模块在应用线程更新独立文档树并生成不可变 OverlaySnapshot，随 RenderView 提交。高层共用管线在 ToneMap 和可选 FXAA 后增加 Screen Overlay，再呈现或回读；核心只认识通用屏幕几何，RmlUi/FreeType 只作为 ui 的私有依赖。详见[游戏 UI](UI.md)。
 
 Renderer 不自动推进扩展系统；模块调度和玩法事件由应用负责。渲染队列、物理内部任务、地图后台 I/O 和音频混音是分别管理的执行路径。
 
@@ -74,7 +78,7 @@ Renderer 不自动推进扩展系统；模块调度和玩法事件由应用负�
 
 节点变换由 Scene 管理，NodeHandle 只保存身份。setLocalTransform() 修改相对父节点的局部矩阵并增加版本，世界矩阵按 parentWorld * local 派生；模型、图片、相机、灯光和分组节点共享此规则。移动刚体主要更新变换，网格和纹理继续复用。序列帧动画改变 Sprite 选择，淡出/闪白改变实例颜色参数，Billboard 最终矩阵则随视图计算。
 
-当前 CPU 按版本复用未变化的派生矩阵及包围盒计算，但后端每帧仍上传该帧需要的完整实例数组，也包含静态实例；尚未实现只上传变化矩阵的增量 GPU 路径。修改场景后需要重新提取快照，已有快照保持原内容。
+CPU 按版本复用未变化的派生矩阵及包围盒计算；后端各帧槽保留实例镜像，复用前等待完成，只上传发生变化的连续范围。静态视图预热后可以复用全部实例数据；裁剪、排序和批次增删会改变数组布局。修改场景后需要重新提取快照，已有快照保持原内容，详见[实例缓存与统计](DIAGNOSTICS.md)。
 
 ## 视图准备与合批
 
@@ -202,3 +206,9 @@ Vulkan 后端已经实现，复用 Scene、Model、快照、帧准备、图编�
 五个可选模块只调用 core 公共 API：tilemap 缓存脏块，collision 使用独立空间网格，particles 做固定步模拟并发布批次，environment 输出/应用灯光和调色，presentation 读取 SpriteViewSnapshot 并更新 Scene 精灵表现。核心和后端都不反向依赖这些模块。遮挡控制后需重新提取最终快照。
 
 精灵覆盖色与内描边进入共用实例属性，实例步长为 224 字节；ToneMap 同时读取 SceneDepth，按需执行接触阴影和通用调色，两个后端使用相同 Shader。具体参数和限制见[图片世界模块](WORLD_MODULES.md)。
+
+## 资源、材质和相机输出扩展
+
+AssetLoader 的后台任务使用独立 CPU 仓库，主线程 adopt 保留句柄身份；资源包卸载和快照引用保留分别管理。Renderer 在预算内准备完整材质/网格，未就绪命令延后。详见[异步资源](ASSET_LOADING.md)。
+
+材质效果通过共用 GLSL 函数体进入双后端管线，时间使用帧 uniform，不需要改变静态矩阵。RenderTexture 为明确可变的 GPU 内容引用，按队列执行顺序更新；每个相机输出保存独立图缓存，禁止同时读写同一输出。详见[渲染扩展](RENDERING_EXTENSIONS.md)。

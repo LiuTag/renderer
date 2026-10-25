@@ -7,10 +7,23 @@
 | [项目概览](../README.md) | 已实现什么、有哪些功能边界 |
 | [版本变更](../CHANGELOG.md) | 当前源码版本相对于初始提交增加了哪些能力 |
 | [快速开始](GETTING_STARTED.md) | 如何构建、运行、接入工程并绘制第一帧 |
+| [相机控制](CAMERA.md) | 轨道/跟随/自由模式、平滑、限幅、父变换、设备无关输入及 SDK |
+| [游戏 UI](UI.md) | RmlUi 文档/皮肤、基础控件、文字/图片、事件/DPI/捕获、双后端及 SDK |
+| [异步资源加载](ASSET_LOADING.md) | 图片/模型后台读取、优先级/取消、CPU 发布与 GPU 上传预算、资源包卸载 |
+| [材质与实时纹理](RENDERING_EXTENSIONS.md) | 共用 GLSL 效果、加色/预乘混合、多相机 GPU 输出、文字/UI 增强 |
+| [内存与性能诊断](DIAGNOSTICS.md) | CPU/GPU 载荷估算、调试面板、实例增量上传及统计口径 |
+| [上传、场景与文字优化](OPTIMIZATION.md) | 合并传输/暂存池、场景根复用、BVH/拾取、R8 与不可变局部更新 |
+| [新版性能矩阵](../examples/performance/README.md) | 六种场景、双后端/线程、参考开关、P95/P99 与传输/内存指标 |
+| [本机优化对照](PERFORMANCE_RESULTS.md) | 同版本参考/优化实测、上传等待与图集载荷、截图一致性及边界 |
+| [五项能力综合示例](../examples/features/README.md) | 同时运行异步树木、风摆/光点、小地图/预览、中文与性能面板 |
+| [世界文字](TEXT.md) | 字体/回退、排版、字形图集、节点绑定、Billboard、固定像素字号及遮挡 |
+| [压缩纹理与数组](TEXTURES.md) | BC/DDS、离线 mip、逐实例数组层、设备降级及 RHI/UI 边界 |
+| [纹理与文字对照示例](../examples/texture_text/README.md) | DDS 打包、数组合批、位图/SDF 缩放与外描边、双后端及 SDK |
+| [森林营地综合应用](../examples/game/README.md) | 十二个模块的音画事件联动、完整应用调度、交互玩法、持久化及窗口/离屏输出 |
 | [离屏渲染与 PNG](OFFSCREEN.md) | 无应用窗口的双后端纹理渲染、直接保存 PNG、尺寸/线程/平台约束及独立 SDK 示例 |
 | [Vulkan 后端](VULKAN.md) | 如何开启 Vulkan、创建窗口/设备、复用前端与验证交换链和双后端一致性 |
 | [SDK 安装与二次开发](SDK.md) | 如何指定安装目录、使用 find_package 和验证独立外部工程 |
-| [模块划分与按需接入](MODULES.md) | 核心、双后端与九个可选模块的边界、依赖、构建开关和 SDK 迁移 |
+| [模块划分与按需接入](MODULES.md) | 核心、双后端与十二个可选模块的边界、依赖、构建开关和 SDK 迁移 |
 | [Box2D 二维物理](PHYSICS2D.md) | 刚体、常用形状、固定步、受力、事件、查询、距离关节及 Scene/流式同步 |
 | [音乐与音效](AUDIO.md) | 音乐流、并发音效、混音分组、空间定位、播放事件和线程约定 |
 | [二次开发手册](DEVELOPMENT_GUIDE.md) | 从 SDK 接入到交互场景、Compute 和自定义 RenderGraph 的完整开发路径 |

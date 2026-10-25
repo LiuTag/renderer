@@ -4,6 +4,7 @@
  */
 #ifndef RENDERER_INCLUDE_RENDERER_RENDERER_HPP_INCLUDED
 #define RENDERER_INCLUDE_RENDERER_RENDERER_HPP_INCLUDED
+#include "renderer/overlay.hpp"
 #include "renderer/render_snapshot.hpp"
 #include <filesystem>
 #include <future>
@@ -23,6 +24,12 @@ struct RendererConfig {
     bool debug = true;
     bool renderThread = false;    // 将上下文与 GPU 操作交给专用线程。
     uint32_t maxQueuedFrames = 2; // 待执行任务队列上限，满时 submit 会等待空位。
+    uint64_t assetUploadBudgetBytes =
+        16ull * 1024 * 1024; ///< 每帧新资源上传预算；0 不限，单个超大资源允许独占一帧。
+    bool forceTextureDecompression = false; ///< 调试：强制 BC 解码后上传，便于对照画质/内存。
+    bool textureCompressionFallback = true; ///< 不支持 BC 时解码 RGBA8；false 明确报错。
+    bool incrementalInstanceUploads = true; ///< 各帧槽保留实例副本，只上传发生变化的连续范围。
+    bool batchResourceUploads = true;       ///< 合并同帧资源传输；false 用于同步上传性能对照。
 };
 /** @brief 独立纹理渲染目标的像素尺寸，与窗口/DPI 无关。 */
 struct OffscreenConfig {
@@ -57,6 +64,9 @@ struct RenderView {
     float contactShadowDistance = 1;    ///< 世界空间最大采样距离，必须为正。
     float contactShadowThickness = .1f; ///< 世界空间命中厚度容差，必须为正。
     uint32_t contactShadowSteps = 12;   ///< 射线步数，[1,32]。
+    OverlaySnapshot overlay;    ///< ToneMap/FXAA 后合成的不可变屏幕覆盖层，回读/PNG 同样包含它。
+    float timeSeconds = 0;      ///< 有限的效果时间，应用提供，单位秒；两个后端一致。
+    bool spatialCulling = true; ///< 用不可变 BVH 粗裁剪，关闭时逐项扫描，便于对照。
 };
 /**
  * @brief 一个渲染 Pass 的 GPU 计时记录，单位为毫秒。
@@ -86,6 +96,26 @@ struct RenderStats {
     bool gpuTimingValid = false; // GPU 时间来自已完成的旧帧，不一定属于本次提交。
     std::vector<PassTiming> passes;
     uint32_t antiAliasingDrawCalls = 0; ///< 本帧抗锯齿全屏绘制次数，关闭时为 0。
+    uint32_t overlayDrawCalls = 0;      ///< 屏幕覆盖层绘制次数，单独计数且计入 drawCalls。
+    uint64_t overlayTriangles = 0;      ///< 覆盖层三角形数，不计入场景 triangles。
+    uint64_t assetUploadedBytes = 0, instanceUploadedBytes = 0, instanceReusedBytes = 0;
+    uint32_t instanceUploadRanges = 0,
+             pendingResourceDraws = 0; ///< 未上传完整的批次本帧跳过，后续帧继续准备。
+    uint64_t uploadCalls = 0, uploadSubmissions = 0, uploadWaits = 0, stagingAllocations = 0,
+             stagingReuses = 0;
+};
+/** @brief 渲染器拥有的资源有效载荷估算，非驱动实际显存；不含驱动/分配对齐和待回收原生对象。 */
+struct RendererMemoryStats {
+    uint64_t meshBytes = 0, textureBytes = 0, materialBytes = 0, frameBufferBytes = 0,
+             renderTargetBytes = 0;
+    uint64_t compressedTextureBytes = 0, textureArrayLayers = 0; ///< 实际 BC 载荷和数组层总数。
+    uint64_t pooledUploadBytes = 0; ///< 受管理暂存池字节，可位于系统内存或设备可见内存。
+    uint64_t instanceMirrorBytes = 0, cachedMeshes = 0, cachedTextures = 0, cachedMaterials = 0;
+    /** @brief 汇总受管理 GPU 资源有效载荷。@return 估算字节。 */
+    uint64_t estimatedGpuBytes() const {
+        return meshBytes + textureBytes + materialBytes + frameBufferBytes + renderTargetBytes +
+               pooledUploadBytes;
+    }
 };
 /**
  * @brief 实际图形后端、供应商、设备及驱动版本描述。
@@ -209,6 +239,17 @@ class Renderer {
      * @return 后端、供应商、设备和驱动版本字符串。
      */
     DeviceInfo deviceInfo() const;
+    /** @brief 在渲染队列中读取缓存与目标内存统计。@return GPU 有效载荷和 CPU 实例镜像估算，不等待
+     * GPU 空闲。 */
+    RendererMemoryStats memoryStatistics() const;
+    /** @brief 创建透明度固定为 1 的 sRGB 相机输出，初始为黑色；仅限本 Renderer 使用。
+     * @param target 像素尺寸。@return GPU 纹理共享引用，尺寸不可变；需缩放时创建新引用。 */
+    RenderTexture createRenderTexture(const OffscreenConfig &target);
+    /** @brief 用指定相机渲染并在 GPU 内复制到目标，不回读、不呈现窗口。
+     * @param snapshot 场景快照，不允许采样本次写入的 target。@param view 相机/后处理。
+     * @param target 本 Renderer 的有效输出。@return 本视图统计；渲染队列保证后续视图能采样结果。 */
+    RenderStats renderToTexture(const RenderSnapshot &snapshot, const RenderView &view,
+                                const RenderTexture &target);
     /**
      * @brief 阻塞回读最近一帧的最终图像。
      * @return 左上原点、显示编码的 RGBA8 图像；首次渲染前调用会抛出异常。

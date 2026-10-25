@@ -17,15 +17,20 @@ struct SpriteRect {
 };
 /** @brief 不可变精灵资源描述；尺寸和裁剪偏移使用原始图片的像素单位。 */
 struct SpriteDesc {
-    TextureHandle texture;                  ///< 当前仓库的纹理；创建精灵后保有共享引用。
-    SpriteRect rect;                        ///< 图集中的内容区域，宽高必须为正。
-    Vec2 originalSize{};                    ///< 裁剪前尺寸；两者均为 0 时取 rect 的宽高。
-    Vec2 trimOffset{};                      ///< 内容左下角在裁剪前图片中的位置。
-    Vec2 pivot{0.5f, 0};                    ///< 原始图片归一化锚点，默认脚底中心，范围 [0,1]。
-    float pixelsPerUnit = 100;              ///< 每世界单位对应的像素数，必须为正。
-    AlphaMode alphaMode = AlphaMode::Blend; ///< Blend 保留柔和边缘并参与精灵排序。
-    float alphaCutoff = 0.5f;               ///< Mask 的 Alpha 裁剪阈值。
-    bool unlit = true;                      ///< true 保持图片原色；false 使用现有场景光照。
+    TextureHandle texture;                      ///< 当前仓库的纹理；创建精灵后保有共享引用。
+    SpriteRect rect;                            ///< 图集中的内容区域，宽高必须为正。
+    Vec2 originalSize{};                        ///< 裁剪前尺寸；两者均为 0 时取 rect 的宽高。
+    Vec2 trimOffset{};                          ///< 内容左下角在裁剪前图片中的位置。
+    Vec2 pivot{0.5f, 0};                        ///< 原始图片归一化锚点，默认脚底中心，范围 [0,1]。
+    float pixelsPerUnit = 100;                  ///< 每世界单位对应的像素数，必须为正。
+    AlphaMode alphaMode = AlphaMode::Blend;     ///< Blend 保留柔和边缘并参与精灵排序。
+    float alphaCutoff = 0.5f;                   ///< Mask 的 Alpha 裁剪阈值。
+    bool unlit = true;                          ///< true 保持图片原色；false 使用现有场景光照。
+    MaterialBlend blend = MaterialBlend::Alpha; ///< 自动生成材质的透明输出模式。
+    uint32_t textureLayer = 0;                  ///< 图集所在数组层，不拆分共享材质。
+    float distanceFieldRange = 0;               ///< SDF 距离范围（纹理像素），0 为普通 Alpha。
+    MaterialInstanceHandle material; ///< 可选自定义材质；必须使用相同 baseColorTexture，提供时
+                                     ///< alpha/unlit/blend 以材质为准。
 };
 /** @brief 图集中的命名条目；texture 由 SpriteAtlas 构造参数统一指定。 */
 struct SpriteAtlasEntry {
@@ -87,9 +92,12 @@ struct SpriteRenderer {
     Vec3 sortOffset{};                          ///< 节点局部排序点偏移；默认使用落地点。
     SpriteTransparency transparency = SpriteTransparency::Sorted;
     bool castShadow = false, receiveShadow = false; ///< 投影沿当前主视图的图片几何生成。
-    Vec4 colorOverlay{};    ///< RGB 覆盖色和 [0,1] 混合权重；可用于闪白，不改变 Alpha。
-    Vec4 outlineColor{};    ///< 内轮廓描边颜色和 [0,1] 混合权重。
-    float outlineWidth = 0; ///< 原纹理像素单位的内描边宽度，[0,16]，0 关闭。
+    Vec4 colorOverlay{};                ///< RGB 覆盖色和 [0,1] 混合权重；可用于闪白，不改变 Alpha。
+    Vec4 outlineColor{};                ///< 内轮廓描边颜色和 [0,1] 混合权重。
+    float outlineWidth = 0;             ///< 原纹理像素单位的内描边宽度，[0,16]，0 关闭。
+    uint32_t textureLayer = UINT32_MAX; ///< UINT32_MAX 采用资源层，其他值逐实例覆盖。
+    float edgeSoftness = 1;             ///< SDF 抗锯齿强度，[0.25,4]。
+    bool depthTest = true; ///< false 在场景透明之后单独绘制，关闭深度读写；仍参与视锥裁剪与后处理。
 };
 /**
  * @brief 将子树精灵作为一个整体与外界排序；最外层分组生效，部件仍按自身顺序排序。

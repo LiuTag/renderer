@@ -1,8 +1,75 @@
 #include "renderer/interaction/picking.hpp"
 #include "sprite_fixture.hpp"
+#include <renderer/texture.hpp>
 using namespace sprite_test;
 int main() {
     const std::vector<std::pair<const char *, std::function<void()>>> tests = {
+        {"compressed array layer and SDF contour picking",
+         [] {
+             Fixture f;
+             TextureDesc transparent{8, 8, std::vector<uint8_t>(256, 255), false};
+             for (size_t i = 3; i < transparent.pixels.size(); i += 4)
+                 transparent.pixels[i] = 0;
+             auto opaque = transparent;
+             for (size_t i = 3; i < opaque.pixels.size(); i += 4)
+                 opaque.pixels[i] = 255;
+             std::array<TextureDesc, 2> images{transparent, opaque};
+             auto tex = f.assets.createTexture(
+                 texture::compress(texture::makeArray(images), TextureCompression::BC3));
+             auto d = f.assets.spriteDescription(f.first);
+             d.texture = tex;
+             d.rect = {0, 0, 8, 8};
+             d.originalSize = {};
+             d.pixelsPerUnit = 4;
+             auto n = f.add(f.assets.createSprite(d));
+             auto hit = [&] {
+                 return SceneQuery(f.extractor.extract(f.scene, f.assets), {.cameraNode = f.camera},
+                                   200, 200)
+                     .pickSprite({100, 80});
+             };
+             require(!hit());
+             auto c = *f.scene.component<SpriteRenderer>(n);
+             c.textureLayer = 1;
+             f.scene.setComponent(n, c);
+             require(hit()->node == n);
+             for (size_t i = 3; i < opaque.pixels.size(); i += 4)
+                 opaque.pixels[i] = 100;
+             d.texture = f.assets.createTexture(opaque);
+             d.textureLayer = 0;
+             d.distanceFieldRange = 8;
+             c.textureLayer = UINT32_MAX;
+             c.sprite = f.assets.createSprite(d);
+             f.scene.setComponent(n, c);
+             require(!hit());
+             for (size_t i = 3; i < opaque.pixels.size(); i += 4)
+                 opaque.pixels[i] = 180;
+             d.texture = f.assets.createTexture(opaque);
+             c.sprite = f.assets.createSprite(d);
+             f.scene.setComponent(n, c);
+             require(hit()->node == n);
+         }},
+        {"unoccluded world sprites match rendering priority",
+         [] {
+             Fixture f;
+             auto opaqueDesc = f.assets.spriteDescription(f.first);
+             opaqueDesc.alphaMode = AlphaMode::Opaque;
+             const auto front = f.add(f.assets.createSprite(opaqueDesc), {0, 0, 1});
+             const auto back = f.add(f.second, {0, 0, -1});
+             auto component = *f.scene.component<SpriteRenderer>(back);
+             component.depthTest = false;
+             f.scene.setComponent(back, component);
+             for (auto mode :
+                  {TransparencyMode::SortedAlpha, TransparencyMode::WeightedBlendedOIT}) {
+                 SceneQuery query(f.extractor.extract(f.scene, f.assets),
+                                  {.cameraNode = f.camera, .transparency = mode}, 200, 200);
+                 require(query.pickSprite({100, 80})->node == back);
+             }
+             component.depthTest = true;
+             f.scene.setComponent(back, component);
+             SceneQuery query(f.extractor.extract(f.scene, f.assets), {.cameraNode = f.camera}, 200,
+                              200);
+             require(query.pickSprite({100, 80})->node == front);
+         }},
         {"batch IDs distinguish ordered transparency from opaque and OIT",
          [] {
              Fixture f;

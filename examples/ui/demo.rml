@@ -1,0 +1,20 @@
+<rml><head><title>Game UI controls</title><link type="text/rcss" href="theme.rcss"/><style>
+#controls { left:18dp; top:18dp; width:245dp; height:338dp; }
+#inventory { left:305dp; top:18dp; width:270dp; height:230dp; }
+.slot { display:inline-block; width:58dp; height:56dp; margin:3dp; padding:3dp; background-color:#30493d; border:1dp #71947a; }
+.slot img { width:40dp; height:40dp; }
+#tip { left:315dp; top:285dp; width:230dp; }
+</style></head><body>
+<div class="panel" id="controls"><div class="title">Forest Camp / UI</div>
+<div class="row" id="status">Ready to explore</div><progress id="health" value="0.72"/>
+<div class="row"><button id="action">Gather</button><button id="disabled" disabled="disabled">Locked</button></div>
+<div class="row"><input class="checkbox" id="music" type="checkbox" checked="checked"/> Music enabled</div>
+<div>Volume <span id="volume-label">65%</span></div><input class="range" id="volume" type="range" min="0" max="100" value="65"/>
+<div class="row">Camp name</div><input class="text" id="name" type="text" value="My camp" maxlength="64"/>
+<div class="muted row">Keyboard focus and mouse capture<br/>prevent camera/game input.</div></div>
+<div class="panel" id="inventory"><div class="title">Backpack</div>
+<div><button class="slot" id="wood"><img src="ui:wood"/></button><button class="slot" id="stone"><img src="ui:stone"/></button><button class="slot" id="food"><img src="ui:food"/></button></div>
+<div class="row muted">Scroll the crafting list</div><div class="scroll" id="recipes">
+<div>Campfire / 2 wood</div><div>Torch / 1 wood</div><div>Pickaxe / 2 stone</div><div>Chest / 6 wood</div><div>Fence / 3 wood</div><div>Soup / 2 food</div><div>Bed / 4 wood</div></div></div>
+<div class="tooltip" id="tip">Hover a backpack slot for details.</div>
+</body></rml>

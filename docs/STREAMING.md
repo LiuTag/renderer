@@ -119,8 +119,8 @@ for (const auto &event : stream.takeEvents()) {
 ## 示例与验证
 
 ```powershell
-& "C:/projects/chatgpt/renderer/build/windows/Release/renderer_world_demo.exe" --backend opengl --streaming
-& "C:/projects/chatgpt/renderer/build/windows/Release/renderer_world_demo.exe" --backend vulkan --stream-cache build/windows/world-save
+.\build\windows\Release\renderer_world_demo.exe --backend opengl --streaming
+.\build\windows\Release\renderer_world_demo.exe --backend vulkan --stream-cache build/windows/world-save
 ```
 
 流式模式相机跟随角色，取消原演示区边界；T 切换脚下草地/道路并请求保存。`--streaming` 使用进程内演示保存器；加 `--stream-cache` 则将修改写入磁盘，下次从同一目录恢复。只有编辑过的区块需要写盘，其他块由确定性生成器重建。

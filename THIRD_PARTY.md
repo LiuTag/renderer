@@ -6,13 +6,23 @@
 
 | 方式 | 依赖 | 考量 |
 | --- | --- | --- |
-| CMake FetchContent | GLFW、glslang、SPIRV-Cross、Box2D | 复用完整上游 CMake 工程，减少主仓库源码体积；远程压缩包按固定版本和 SHA256 校验 |
-| 源码随仓库保存 | TinyGLTF/json/stb、miniaudio、Volk | 文件数量少、集成直接，保留上游原文，正常构建无需单独下载这些文件 |
+| CMake FetchContent | GLFW、glslang、SPIRV-Cross、Box2D、RmlUi、FreeType | 复用完整上游 CMake 工程，减少主仓库源码体积；远程压缩包按固定版本和 SHA256 校验 |
+| 源码随仓库保存 | TinyGLTF/json/stb、miniaudio、Volk、stb_dxt、bcdec | 文件数量少、集成直接，保留上游原文，正常构建无需单独下载这些文件 |
 | 生成结果随仓库保存 | GLAD | 固定 OpenGL 4.5 加载代码，正常构建无需 Python、生成器或联网再生成 |
 
 FetchContent 默认在构建目录 `_deps` 保存源码和构建结果。离线构建可通过 `FETCHCONTENT_SOURCE_DIR_<依赖名>` 使用预先准备的精确版本源码；此方式直接使用指定目录，不重新下载或自动校验本地内容。`.cache` 是当前工作区可选的本地源码缓存，不纳入 Git。获取方式不同，但版本升级都应人工更新版本/哈希或生成结果，并重新验证构建、测试与 SDK。
 
 安装包提供公共引擎头文件和完整静态链接依赖。glslang、SPIRV-Cross、GLFW、GLAD、Box2D 等单独随包安装，miniaudio、Volk 和模型/图片编解码实现编入对应引擎库；CMake 目标自动传递依赖。第三方实现头文件不进入公共 API，也不要求 SDK 使用者自行安装。系统图形/音频运行时和驱动仍由运行环境提供。
+
+## RmlUi 6.3、FreeType 2.14.3 与 UI 示例字体
+
+- RmlUi 仅在 RENDERER_BUILD_UI=ON 时下载/构建，FreeType 在 UI 或 TEXT 启用时构建且只保留一份静态库。固定 URL/SHA256 分别位于 modules/ui/CMakeLists.txt 和 cmake/rendererFreetype.cmake；可使用 FETCHCONTENT_SOURCE_DIR_RMLUI / FETCHCONTENT_SOURCE_DIR_FREETYPE 指定离线源码。
+- [RmlUi 固定版本](https://github.com/mikke89/RmlUi/tree/6.3) 压缩包 SHA256：`bfb340660e4bce38d4211cffc836cfbe1be676aa36ef9cc48e7df3855ee74fe3`。使用 Core，不启用其原生渲染器、Lua、SVG/Lottie 插件或上游示例；通过引擎 RHI 合成。
+- [FreeType 固定版本](https://github.com/freetype/freetype/tree/VER-2-14-3) 压缩包 SHA256：`3f624983444f9e9149707853a792dc5a897f3afc9f23a9b8669c03ac564779d1`。关闭 zlib、bzip2、png、HarfBuzz 和 Brotli 外部依赖。
+- RmlUi 为 MIT，原文保存于 third_party/licenses/RmlUi.txt。FreeType 的许可选择/说明和原文保存于 FreeType.txt、FreeType-FTL.txt、FreeType-GPLv2.txt；本 SDK 按 FreeType License 分发。相关版权及归属声明随包保留。
+- 本软件部分功能基于 FreeType Team 的工作；FreeType 项目网址为 https://freetype.org/，其版权声明与许可原文随分发文档提供。
+- 示例使用上游 Samples/assets/LatoLatin-Regular.ttf，许可原文为 third_party/licenses/UI-fonts.txt 中的 Lato/SIL Open Font License。字体从固定上游包安装到 SDK；仅启用 text 时下载固定 6.3 的单个字体文件，SHA256 为 `d785334ac4e7810f571def986bbad41161f68ac385db8813f798bf04d71478e1`，不获取 RmlUi 源码。主仓库不另存该二进制；应用不强制使用此字体，也应自行提供需要的中文字形。
+- SDK 私有传递 rmlui_core 和共用 freetype 静态库，不导出第三方实现头文件；公共 UiContext/UiSubscription/TextSystem 使用 PImpl。当前文字/输入范围见[UI 文档](docs/UI.md)。
 
 ## GLFW 3.4
 
@@ -67,6 +77,13 @@ python -m glad --api gl:core=4.5 --extensions '' --out-path third_party/glad --r
 - stb_image 为 public domain 或 MIT，两种声明均保留在 `stb_image.h` 末尾，并原样复制到 `third_party/licenses/stb_image.txt`。
 - stb_image_write 1.16 用于 PNG 输出；同样提供 MIT/public domain 双许可，原文保存为 `third_party/licenses/stb_image_write.txt`。头文件 SHA256 为 `bdbaa2c548ac9bde2913b6b46c4d315a04d2624c81ee1553390eb8fb2de2835d`。
 - 写入实现和静态符号仅存在于 core 的 `src/image.cpp`，SDK 不安装实现头文件，也不需要额外 PNG/zlib 链接库。
+
+## stb_dxt 1.12 与 bcdec 0.985
+
+- [stb_dxt 固定源码](https://github.com/nothings/stb/blob/7023e273f1513b68b8d4086077c6faca555d50df/stb_dxt.h)，原文保存于 third_party/stb/stb_dxt.h，SHA256：`807667ef98e0fd749cdb65cca0c2d980bc148109d2fed6f1873c81ae0f449933`。
+- [bcdec 固定源码](https://github.com/iOrange/bcdec/blob/80859ed3b7afb1c527a2a99d70c61457bea72d0c/bcdec.h)，原文保存于 third_party/bcdec/bcdec.h，SHA256：`134520764d96f70a27db814173616c89ad85db95fbd3328417c7a8c77e7ca189`。
+- stb_dxt 提供 BC1/3/4/5 CPU 编码；bcdec 提供 BC1/2/3/4/5/7 CPU 解码，用于离线工具、拾取和设备降级。实现只编入 renderer_core，无新静态依赖库、运行时下载或第三方公共头文件。
+- 保留上游 MIT/公共领域或 Unlicense 双许可原文，分别复制至 third_party/licenses/stb_dxt.txt 和 bcdec.txt，随 SDK 安装；第三方源码不格式化或改写。
 
 ## miniaudio 0.11.25
 

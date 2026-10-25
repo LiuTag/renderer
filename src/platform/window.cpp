@@ -1,6 +1,7 @@
 #include "renderer/window.hpp"
 #include "../internal/window.hpp"
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <stdexcept>
 #include <string_view>
@@ -307,8 +308,10 @@ detail::GlfwLifetime::~GlfwLifetime() {
     glfwTerminate();
 }
 detail::WindowState::~WindowState() {
-    if (native)
+    if (native) {
+        removeTextInputHook(*this);
         glfwDestroyWindow(native);
+    }
 }
 void detail::WindowState::checkThread() const {
     if (std::this_thread::get_id() != lifetime->thread)
@@ -361,6 +364,7 @@ Window::Window(const WindowConfig &c) : impl_(std::make_unique<Impl>()) {
         throw std::runtime_error(glfwError("Graphics window creation failed"));
     glfwSetWindowUserPointer(impl_->state->native, impl_->state.get());
     installCallbacks(impl_->state->native);
+    detail::installTextInputHook(*impl_->state);
     glfwSetInputMode(impl_->state->native, GLFW_LOCK_KEY_MODS, GLFW_TRUE);
     rememberWindowedPlacement(*impl_->state);
     if (c.mode != WindowMode::Windowed)
@@ -370,6 +374,38 @@ Window::Window(const WindowConfig &c) : impl_(std::make_unique<Impl>()) {
         impl_->state->makeCurrent();
         glfwSwapInterval(c.vsync ? 1 : 0);
     }
+}
+void Window::setTextInputArea(const TextInputArea &area) {
+    auto &s = *impl_->state;
+    s.checkThread();
+    for (float v : {area.x, area.y, area.width, area.height})
+        if (!std::isfinite(v) || std::abs(v) > 10000000)
+            throw std::invalid_argument("Invalid text input area");
+    if (area.width < 0 || area.height < 0)
+        throw std::invalid_argument("Negative text input area");
+    const auto &old = s.textInputArea;
+    if (old.active == area.active && old.x == area.x && old.y == area.y &&
+        old.width == area.width && old.height == area.height)
+        return;
+    s.textInputArea = area;
+    detail::updateTextInputArea(s);
+}
+std::string Window::clipboardText() const {
+    impl_->state->checkThread();
+    const char *value = glfwGetClipboardString(impl_->state->native);
+    if (!value) {
+        glfwGetError(nullptr);
+        return {};
+    }
+    return value;
+}
+void Window::setClipboardText(const std::string &text) {
+    impl_->state->checkThread();
+    if (text.find('\0') != std::string::npos)
+        throw std::invalid_argument("Clipboard text contains NUL");
+    glfwGetError(nullptr);
+    glfwSetClipboardString(impl_->state->native, text.c_str());
+    checkGlfw("Set clipboard text");
 }
 Window::~Window() = default;
 Window::Window(Window &&) noexcept = default;

@@ -27,6 +27,8 @@ struct InstanceRecord {
     Vec4 colorOverlay{}, outlineColor{}, effects{};
     std::optional<SpriteSort> spriteSort;
     bool orderedSprite = false;
+    bool depthTest = true;
+    float textureLayer = -1;
 };
 /**
  * @brief 快照中的源节点、相机组件与世界变换记录。
@@ -50,6 +52,12 @@ namespace renderer {
  * @brief 共享不可变实例、相机、灯光和场景版本记录的快照实现。
  */
 struct RenderSnapshot::Impl {
+    std::shared_ptr<const Impl> sourceScene;
+    const Impl &scene() const {
+        return sourceScene ? *sourceScene : *this;
+    }
+    detail::AabbIndex spriteIndex, meshIndex;
+    bool indexed = true;
     uint64_t revision = 0;
     std::vector<detail::InstanceRecord> instances;
     std::vector<detail::SpriteRecord> sprites;

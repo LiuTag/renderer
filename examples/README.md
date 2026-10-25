@@ -27,10 +27,14 @@ cmake --build --preset windows-release --parallel 6
 | `renderer_sdk_consumer` | `sdk_consumer/main.cpp` | core，自动使用可用的 opengl |
 | `renderer_modules_consumer` | `modules_consumer/main.cpp` | core，自动使用启用的动画/交互模块 |
 | `renderer_audio_demo` | `audio/main.cpp` | audio |
+| `renderer_camera_demo` | `camera/main.cpp` | camera，无窗口验证三种模式和父节点写回 |
+| `renderer_ui_demo` | `ui/main.cpp`、RML/RCSS | ui，游戏基础控件、事件/DPI、双后端窗口/离屏 PNG |
+| `renderer_text_demo` | `text/main.cpp` | text，世界路牌、Billboard、屏幕字号、遮挡、节点绑定和 PNG |
 | `renderer_physics2d_demo` | `physics2d/main.cpp` | physics2d，无窗口物理演示 |
 | `renderer_world_demo` | `world/main.cpp` | tilemap、particles、environment、presentation、physics2d 或 collision，以及一个后端 |
+| `renderer_game_demo` | `game/main.cpp`、`application.cpp`、`audio_system.cpp` | 十二个可选模块及一个后端，完整森林营地音画联动应用 |
 
-依赖模块未构建时，跳过对应示例。两个后端及全部九个扩展开启时有 15 个示例目标。关闭 OpenGL 仍可编译 CPU 使用者、音频/物理示例及启用的 Vulkan 示例。`renderer_sprite_demo` 和 `development_sprite` 复用同一份源码，保留原有可执行程序名称。
+依赖模块未构建时，跳过对应示例。两个后端及全部十二个扩展开启时有 23 个示例目标。关闭 OpenGL 仍可编译 CPU 使用者、音频/物理示例及启用的 Vulkan 示例。`renderer_sprite_demo` 和 `development_sprite` 复用同一份源码，保留原有可执行程序名称。
 
 源码构建加 `-DRENDERER_BUILD_VULKAN=ON` 后运行 `renderer_vulkan_demo --threaded --oit --fxaa` 或 `renderer_vulkan_sprite_demo --threaded --oit`。窗口/设备创建以外的应用逻辑共用原示例，详见 [Vulkan 说明](../docs/VULKAN.md)。
 
@@ -40,7 +44,7 @@ cmake --build --preset windows-release --parallel 6
 
 ## 安装后作为独立工程
 
-SDK 安装本目录及测试注册脚本；`examples/` 整体或 development、sdk_consumer、modules_consumer、audio、sprite_benchmark、world、physics2d、offscreen 子目录都可单独配置。独立配置时通过 find_package 使用 SDK，例如：
+SDK 安装本目录及测试注册脚本；`examples/` 整体或 development、sdk_consumer、modules_consumer、audio、sprite_benchmark、world、physics2d、offscreen、game 子目录都可单独配置。独立配置时通过 find_package 使用 SDK，例如：
 
 ```powershell
 cmake -S C:/SDK/renderer/share/renderer/examples -B build/sdk-examples -DCMAKE_PREFIX_PATH=C:/SDK/renderer -DRENDERER_GL_TESTS=ON
@@ -61,3 +65,11 @@ ctest --test-dir build/sdk-examples -C Release --output-on-failure
 ## 离屏图片输出
 
 [offscreen](offscreen/README.md) 使用相同森林图集，直接输出 PNG，不创建应用 Window。运行 `renderer_offscreen_demo --backend vulkan --threaded --output build/windows/forest.png`。Vulkan 路径完全跳过窗口系统；Windows OpenGL 使用 pbuffer，驱动可能保留内部隐藏 HWND。接口、颜色和平台约束见[离屏文档](../docs/OFFSCREEN.md)。
+
+## 基础能力综合演示
+
+[features](features/README.md) 同时演示异步资源与上传预算、内存调试面板、实例增量上传、风摆/加色材质、多相机 GPU 小地图/角色预览、中文文字/输入和字形缓存回收。目标 renderer_features_demo，需要 ui/text 和至少一个后端，支持源码或 SDK 独立构建、窗口/离屏和线程切换。
+
+[texture_text](texture_text/README.md) 包含 renderer_texture_pack CPU DDS 工具及 renderer_texture_text_demo 双后端对照场景，演示独立图片/数组/BC3+mip、位图/SDF 缩放、描边与缓存重建。只启用 core 仍可构建打包器；可视示例需 text 和任一后端，支持 SDK 独立配置、PNG 及线程模式切换。
+
+[performance](performance/README.md) 的 renderer_performance 提供静态/动态节点、分块、资源流入、中文字形与 OIT 六负载，支持双后端/线程、参考开关和 SDK 独立构建，导出 P95/P99、GPU/传输/暂存/图集 CSV。

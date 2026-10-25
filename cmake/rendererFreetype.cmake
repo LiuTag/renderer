@@ -1,0 +1,25 @@
+# UI 与世界文字共用同一份静态 FreeType，字体缓存由各模块分别持有。
+include_guard(GLOBAL)
+function(renderer_use_freetype)
+    if(TARGET freetype)
+        return()
+    endif()
+    include(FetchContent)
+    set(BUILD_SHARED_LIBS OFF)
+    foreach(dependency IN ITEMS ZLIB BZIP2 PNG HARFBUZZ BROTLI)
+        set(FT_DISABLE_${dependency} ON CACHE BOOL "Keep font runtime self-contained" FORCE)
+    endforeach()
+    FetchContent_Declare(freetype
+        URL https://codeload.github.com/freetype/freetype/zip/refs/tags/VER-2-14-3
+        URL_HASH SHA256=3f624983444f9e9149707853a792dc5a897f3afc9f23a9b8669c03ac564779d1
+        DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
+    FetchContent_MakeAvailable(freetype)
+    set_property(DIRECTORY "${freetype_SOURCE_DIR}" PROPERTY EXCLUDE_FROM_ALL TRUE)
+    if(NOT TARGET Freetype::Freetype)
+        add_library(Freetype::Freetype ALIAS freetype)
+    endif()
+    set_target_properties(freetype PROPERTIES FOLDER "modules" DEBUG_POSTFIX "d")
+    if(MSVC)
+        target_compile_options(freetype PRIVATE /utf-8)
+    endif()
+endfunction()

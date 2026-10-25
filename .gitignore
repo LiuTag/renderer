@@ -30,7 +30,16 @@ CMakeUserPresets.json
 
 # 根目录中的默认性能输出和截图；测试素材仍需跟踪。
 /sprite-benchmark.csv
+/performance.csv
+/performance.csv.environment.txt
 /offscreen.png
+/ui.png
+/text.png
+/features.png
+/features-cache/
+/texture-text.png
+/texture-text-cache/
+/texture.dds
 /*.ppm
 
 # 编辑器临时文件和系统缩略图。

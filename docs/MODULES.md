@@ -2,9 +2,9 @@
 
 [文档导航](README.md) · [SDK 安装](SDK.md) · [Sprite 开发](SPRITES.md)
 
-动画、交互、音频、地图、碰撞、粒子、环境、表现和二维物理分别生成独立的可选静态库。核心和两种图形后端不链接这些扩展；应用按需要选择组件。
+动画、交互、音频、地图、碰撞、粒子、环境、表现、二维物理、相机控制、UI 和世界文字分别生成独立可选静态库。核心和两种图形后端不链接这些扩展；应用按需要选择组件。
 
-Visual Studio 解决方案中，`renderer_core`、启用的 `renderer_opengl` / `renderer_vulkan`、共用的 `renderer_platform` / `renderer_pipeline` 及 GLAD/Volk 实现目标归入 `core` 文件夹；九个扩展及音频内部实现目标归入 `modules` 文件夹。示例和测试继续分别位于 `examples`、`tests`；这些逻辑分组不改变库的依赖关系、输出位置或 SDK 安装路径。
+Visual Studio 解决方案中，`renderer_core`、启用的 `renderer_opengl` / `renderer_vulkan`、共用的 `renderer_platform` / `renderer_pipeline` 及 GLAD/Volk 实现目标归入 `core` 文件夹；十二个扩展及音频内部实现目标归入 `modules` 文件夹。示例和测试继续分别位于 `examples`、`tests`；这些逻辑分组不改变库的依赖关系、输出位置或 SDK 安装路径。
 
 | CMake 目标 | 职责 | 直接依赖 | 默认构建 |
 | --- | --- | --- | --- |
@@ -20,6 +20,9 @@ Visual Studio 解决方案中，`renderer_core`、启用的 `renderer_opengl` / 
 | `renderer::environment` | 昼夜太阳、调色与天气强度过渡 | core | 是，可关闭 |
 | `renderer::presentation` | Scene 精灵遮挡淡出、闪白恢复 | core | 是，可关闭 |
 | `renderer::physics2d` | 刚体、形状、固定步、事件、查询、距离关节、场景同步 | core、私有 Box2D | 是，可关闭 |
+| `renderer::camera` | 轨道/跟随/自由控制、输入增量、平滑、限幅和父变换写回 | core | 是，可关闭 |
+| `renderer::ui` | RML/RCSS 游戏控件、文字/图片、事件/DPI/捕获和覆盖层快照 | core、私有 RmlUi/FreeType | 是，可关闭 |
+| `renderer::text` | 世界文字、字体/排版/图集、节点绑定、Billboard、屏幕字号与遮挡 | core、私有共用 FreeType | 是，可关闭 |
 
 ```mermaid
 flowchart BT
@@ -28,6 +31,9 @@ flowchart BT
     interaction[renderer::interaction]
     audio[renderer::audio]
     physics[renderer::physics2d]
+    camera[renderer::camera]
+    ui[renderer::ui]
+    text[renderer::text]
     opengl[renderer::opengl]
     vulkan[renderer::vulkan]
     core[renderer::core]
@@ -38,6 +44,12 @@ flowchart BT
     application --> interaction
     application --> audio
     application --> physics
+    application --> camera
+    camera --> core
+    application --> ui
+    ui --> core
+    application --> text
+    text --> core
     physics --> core
     application --> opengl
     application --> vulkan
@@ -50,7 +62,7 @@ flowchart BT
 
 `renderer_platform` 封装共用 GLFW 窗口，`renderer_pipeline` 执行共用的 RHI 渲染流程；它们是内部静态依赖，SDK 自动传递，应用不直接链接。两种后端可以同时存在，通过窗口的 `GraphicsApi` 及相应工厂选择，详见 [Vulkan 说明](VULKAN.md)。
 
-九个扩展之间没有依赖，均不创建窗口、不使用原生图形 API、不包含 `src/internal` 私有头文件。类型仍位于 C++ 的 `renderer` 命名空间，模块由头文件路径和链接目标区分，对外服务类继续采用 PImpl。audio 使用独立设备时钟，应用将动画或玩法事件映射成播放请求，详见[音频说明](AUDIO.md)。
+十二个扩展之间没有依赖，均不创建窗口、不使用原生图形 API、不包含 `src/internal` 私有头文件。类型仍位于 C++ 的 `renderer` 命名空间，模块由头文件路径和链接目标区分，对外服务类继续采用 PImpl。audio 使用独立设备时钟，应用将动画或玩法事件映射成播放请求，详见[音频说明](AUDIO.md)。
 
 ## 源码位置
 
@@ -66,12 +78,21 @@ modules/interaction/
 modules/audio/
     include/renderer/audio/          音频公共接口
     src/                            音频实现和私有 miniaudio 编译入口
+modules/camera/
+    include/renderer/camera/         相机控制公共接口
+    src/                            姿态、输入、平滑和场景写回
 examples/development/sprite_app.cpp  应用示例：移动、障碍、选择与相机
 ```
 
 `SpriteRenderer`、`SortingGroup` 和 Billboard 属于渲染描述，保留在 core；当前帧显示哪张图片由 animation 更新，点击谁由 interaction 判断。通用圆形障碍查询和连续移动已由 collision 提供；点击后移动、选中状态、相机输入及示例图集生成继续由应用拥有。旧森林示例保留其演示移动逻辑，新 world 示例使用独立碰撞模块。
 
+camera 接收设备无关增量，不订阅 Window；应用提供目标和输入映射。game 已使用 Follow 控制器，旧 world/森林保留手写相机。接口、单位和 SDK 示例见[相机控制](CAMERA.md)。
+
 ## 只读视图数据边界
+
+text 拥有独立字体缓存和标签身份，可绑定 Scene 节点，但不向 core 加入字体解析组件。每个视图输出保有资源的 SpriteBatch，字体/标签销毁不影响旧快照；FreeType 代码与 UI 共用，缓存分别管理。详见[世界文字](TEXT.md)。
+
+UI 文档树与世界 Scene 独立。ui 输出 core 的通用 OverlaySnapshot，不将 RmlUi 类型放进核心或后端。布局/事件在 UI 线程完成，绘制快照跨线程传递，在 ToneMap/FXAA 后合成。输入路由、控件、SDK 与首版限制见[游戏 UI](UI.md)。
 
 interaction 通过 `RenderSnapshot::spriteView(view, width, height)` 取得 `SpriteViewSnapshot`。这个 core 接口只提供视图展开后的渲染数据：
 
@@ -120,22 +141,22 @@ Vulkan 应用将上例的 `opengl` 组件和目标替换为 `vulkan`；场景、
 
 ## 构建开关与安装
 
-默认构建九个扩展。可分别设置 `RENDERER_BUILD_ANIMATION`、`RENDERER_BUILD_INTERACTION`、`RENDERER_BUILD_AUDIO`、`RENDERER_BUILD_TILEMAP`、`RENDERER_BUILD_COLLISION`、`RENDERER_BUILD_PARTICLES`、`RENDERER_BUILD_ENVIRONMENT`、`RENDERER_BUILD_PRESENTATION`、`RENDERER_BUILD_PHYSICS2D`。以下命令关闭全部扩展：
+默认构建十二个扩展。可分别设置 `RENDERER_BUILD_ANIMATION`、`RENDERER_BUILD_INTERACTION`、`RENDERER_BUILD_AUDIO`、`RENDERER_BUILD_TILEMAP`、`RENDERER_BUILD_COLLISION`、`RENDERER_BUILD_PARTICLES`、`RENDERER_BUILD_ENVIRONMENT`、`RENDERER_BUILD_PRESENTATION`、`RENDERER_BUILD_PHYSICS2D`、`RENDERER_BUILD_CAMERA`、`RENDERER_BUILD_UI`、`RENDERER_BUILD_TEXT`。以下命令关闭全部扩展：
 
 ```powershell
-cmake --preset windows -DRENDERER_BUILD_ANIMATION=OFF -DRENDERER_BUILD_INTERACTION=OFF -DRENDERER_BUILD_AUDIO=OFF -DRENDERER_BUILD_TILEMAP=OFF -DRENDERER_BUILD_COLLISION=OFF -DRENDERER_BUILD_PARTICLES=OFF -DRENDERER_BUILD_ENVIRONMENT=OFF -DRENDERER_BUILD_PRESENTATION=OFF -DRENDERER_BUILD_PHYSICS2D=OFF
+cmake --preset windows -DRENDERER_BUILD_ANIMATION=OFF -DRENDERER_BUILD_INTERACTION=OFF -DRENDERER_BUILD_AUDIO=OFF -DRENDERER_BUILD_TILEMAP=OFF -DRENDERER_BUILD_COLLISION=OFF -DRENDERER_BUILD_PARTICLES=OFF -DRENDERER_BUILD_ENVIRONMENT=OFF -DRENDERER_BUILD_PRESENTATION=OFF -DRENDERER_BUILD_PHYSICS2D=OFF -DRENDERER_BUILD_CAMERA=OFF -DRENDERER_BUILD_UI=OFF -DRENDERER_BUILD_TEXT=OFF
 cmake --build --preset windows-release --parallel 6
 ```
 
 这时仍构建普通三维示例及精灵渲染；森林和 world 示例因所需扩展缺失而不构建。只需要 CPU 核心时：
 
 ```powershell
-cmake -S . -B build/core -DRENDERER_BUILD_OPENGL=OFF -DRENDERER_BUILD_VULKAN=OFF -DRENDERER_BUILD_EXAMPLES=OFF -DRENDERER_BUILD_ANIMATION=OFF -DRENDERER_BUILD_INTERACTION=OFF -DRENDERER_BUILD_AUDIO=OFF -DRENDERER_BUILD_TILEMAP=OFF -DRENDERER_BUILD_COLLISION=OFF -DRENDERER_BUILD_PARTICLES=OFF -DRENDERER_BUILD_ENVIRONMENT=OFF -DRENDERER_BUILD_PRESENTATION=OFF -DRENDERER_BUILD_PHYSICS2D=OFF
+cmake -S . -B build/core -DRENDERER_BUILD_OPENGL=OFF -DRENDERER_BUILD_VULKAN=OFF -DRENDERER_BUILD_EXAMPLES=OFF -DRENDERER_BUILD_ANIMATION=OFF -DRENDERER_BUILD_INTERACTION=OFF -DRENDERER_BUILD_AUDIO=OFF -DRENDERER_BUILD_TILEMAP=OFF -DRENDERER_BUILD_COLLISION=OFF -DRENDERER_BUILD_PARTICLES=OFF -DRENDERER_BUILD_ENVIRONMENT=OFF -DRENDERER_BUILD_PRESENTATION=OFF -DRENDERER_BUILD_PHYSICS2D=OFF -DRENDERER_BUILD_CAMERA=OFF -DRENDERER_BUILD_UI=OFF -DRENDERER_BUILD_TEXT=OFF
 cmake --build build/core --config Debug --parallel 4
 ctest --test-dir build/core -C Debug --output-on-failure
 ```
 
-安装仍使用 `CMAKE_INSTALL_PREFIX` 或 `cmake --install ... --prefix ...`。只安装启用模块的库、专用头文件与已有兼容转发头；完整包包含 `renderer_<模块名>.lib` 九个扩展库。关闭模块后请求对应 REQUIRED 组件会在配置阶段失败。更换 SDK 模块配置时使用新的安装目录，CMake install 不负责删除旧版本残留文件。
+安装仍使用 `CMAKE_INSTALL_PREFIX` 或 `cmake --install ... --prefix ...`。只安装启用模块的库、专用头文件与已有兼容转发头；完整包包含 `renderer_<模块名>.lib` 十二个扩展库。关闭模块后请求对应 REQUIRED 组件会在配置阶段失败。更换 SDK 模块配置时使用新的安装目录，CMake install 不负责删除旧版本残留文件。
 
 安装后的 `examples/development` 提供 scene/compute/graph；当动画和交互都存在时再提供 sprite。音频启用时另有独立的 `examples/audio`。miniaudio 源码随仓库保存，编入音频静态库，来源与许可见[第三方说明](../THIRD_PARTY.md)。
 
@@ -159,4 +180,14 @@ ctest --test-dir build/modules-consumer -C Release --output-on-failure
 
 新目录分别为 `modules/tilemap`、`modules/collision`、`modules/particles`、`modules/environment`、`modules/presentation`，均具有独立的 include/renderer/模块名 与 src。集成示例在 `examples/world`，仅当所需五模块和至少一个后端全部存在时生成。关闭模块后，相应 CPU 测试、公共头文件和 SDK 目标也随之关闭。
 
-`renderer::physics2d` 是第九个可选模块，只依赖 core 公共接口，私有链接 Box2D；目录为 modules/physics2d，开关为 RENDERER_BUILD_PHYSICS2D。核心、图形后端、tilemap 和 collision 均不反向依赖它。公开接口与 SDK 接入见[Box2D 文档](PHYSICS2D.md)。
+`renderer::physics2d` 是独立可选模块，只依赖 core 公共接口，私有链接 Box2D；目录为 modules/physics2d，开关为 RENDERER_BUILD_PHYSICS2D。核心、图形后端、tilemap 和 collision 均不反向依赖它。公开接口与 SDK 接入见[Box2D 文档](PHYSICS2D.md)。
+
+## 基础能力增强的归属
+
+AssetLoader、AssetStore 包接收/卸载与 CPU 统计属于 core。GPU 上传预算、实例镜像、材质函数/混合、RenderTexture 和 GPU 载荷统计属于核心/后端共用管线。Windows 组合消息/候选区域与剪贴板属于内部平台库；UI 通过公共事件和应用注入闭包接入，不链接平台库。字形预热/回收/字体卸载属于 text，调试面板和实时图片注册属于 ui，十二模块依赖方向保持不变。
+
+## 压缩/数组纹理与文字缓存的归属
+
+DDS/BC 载荷、CPU 编解码/mip、数组描述和 Sprite 选层属于 core；GPU 格式、层视图、采样/Storage Image/拷贝和回读属于 RHI 后端，材质数组采样/降级共用管线。没有增加新的强制模块或私有类型依赖。SDF 字形和 LRU 属于 text，共享 RmlUi 字体回收和 CPU 图片选层属于 ui；十二模块的依赖方向保持不变。见[纹理](TEXTURES.md)与[文字](TEXT.md)。
+
+传输批次/暂存池、不可变纹理局部更新、场景/BVH 位于 core 与已有后端；interaction 使用核心公开 rayCandidates 加速拾取，不访问内部索引类型。R8 页面与脏矩形属于 text，所有权方向保持不变，详见[优化说明](OPTIMIZATION.md)。

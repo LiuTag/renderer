@@ -9,6 +9,7 @@
 #include <memory>
 #include <span>
 #include <utility>
+#include <vector>
 
 namespace renderer {
 /** @brief 展开后的精灵渲染记录；纹理为共享只读 CPU 数据，不包含内部资源类型。 */
@@ -17,13 +18,17 @@ struct SpriteViewItem {
     Mat4 world; ///< 当前视图计算的图片平面变换，已包含锚点、裁剪、翻转及 Billboard。
     AABB bounds;
     Vec4 uvRect; ///< UV 偏移 XY、缩放 ZW，翻转时缩放为负。
-    Vec4 tint;
+    Vec4 tint;   ///< 实例色乘以材质基础色；不包含自定义 surface 的变换。
     AlphaMode alphaMode = AlphaMode::Blend;
     float alphaCutoff = 0.5f;
     SpriteTransparency transparency = SpriteTransparency::Sorted;
     uint32_t layerMask = 0xFFFFFFFFu;
-    std::shared_ptr<const TextureDesc> texture; ///< 复制该引用可独立保留纹理像素。
-    uint64_t instanceId = 0;                    ///< 批量精灵的应用身份；普通场景节点为 0。
+    std::shared_ptr<const TextureDesc>
+        texture;                  ///< 复制可保留纹理；实时 RenderTexture 没有 CPU 像素。
+    uint64_t instanceId = 0;      ///< 批量精灵的应用身份；普通场景节点为 0。
+    float distanceFieldRange = 0; ///< >0 时 CPU 拾取以 0.5 距离等值线近似轮廓。
+    uint32_t textureLayer = 0;    ///< 实例最终选中的数组层。
+    bool depthTest = true;        ///< false 表示关闭深度的世界精灵，拾取时优先于受深度约束的精灵。
 };
 /**
  * @brief 以共享不可变 PImpl 保存指定视图的精灵渲染数据，不包含动画或交互逻辑。
@@ -54,6 +59,10 @@ class SpriteViewSnapshot {
     Mat4 inverseViewProjection() const;
     /** @brief 读取视口像素尺寸。@return 宽高；空视图为 (0,0)。 */
     std::pair<uint32_t, uint32_t> viewportSize() const;
+    /** @brief 保守筛选射线可能命中的精灵，保持 sprites 的顺序。
+     * @param origin 有限射线原点。@param direction 有限非零方向，无需归一化。
+     * @return sprites 的候选下标；仍需检查图片平面与 Alpha。 */
+    std::vector<uint32_t> rayCandidates(Vec3 origin, Vec3 direction) const;
 
   private:
     struct Impl;

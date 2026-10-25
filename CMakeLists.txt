@@ -54,6 +54,9 @@ option(RENDERER_BUILD_PARTICLES "Build the optional particles module" ON)
 option(RENDERER_BUILD_ENVIRONMENT "Build the optional environment module" ON)
 option(RENDERER_BUILD_PRESENTATION "Build the optional presentation module" ON)
 option(RENDERER_BUILD_PHYSICS2D "Build the optional Box2D physics module" ON)
+option(RENDERER_BUILD_CAMERA "Build the optional camera controller module" ON)
+option(RENDERER_BUILD_UI "Build the optional RmlUi game UI module" ON)
+option(RENDERER_BUILD_TEXT "Build the optional FreeType world text module" ON)
 option(RENDERER_GL_TESTS "Include OpenGL tests when RENDERER_BUILD_TESTS is enabled" OFF)
 option(RENDERER_VULKAN_TESTS "Include Vulkan GPU and presentation tests when tests are enabled" OFF)
 option(RENDERER_INSTALL_SDK "Install public headers, libraries and CMake package" ON)
@@ -62,6 +65,9 @@ add_library(renderer_core STATIC
     src/events.cpp
     src/math.cpp
     src/assets.cpp
+    src/texture.cpp
+    src/asset_loader.cpp
+    src/render_texture.cpp
     src/image.cpp
     src/sprite.cpp
     src/sprite_batch.cpp
@@ -69,6 +75,7 @@ add_library(renderer_core STATIC
     src/model.cpp
     src/scene.cpp
     src/renderer.cpp
+    src/overlay.cpp
     src/frame_builder.cpp
     src/shader.cpp
     src/rhi.cpp
@@ -80,8 +87,10 @@ target_include_directories(renderer_core PUBLIC
     $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
 set_target_properties(renderer_core PROPERTIES EXPORT_NAME core FOLDER "core")
 target_include_directories(renderer_core SYSTEM PRIVATE third_party/tinygltf)
+target_include_directories(renderer_core SYSTEM PRIVATE third_party)
 target_compile_features(renderer_core PUBLIC cxx_std_20)
-target_link_libraries(renderer_core PRIVATE glslang::glslang glslang::SPIRV glslang::glslang-default-resource-limits spirv-cross-glsl)
+find_package(Threads REQUIRED)
+target_link_libraries(renderer_core PRIVATE Threads::Threads glslang::glslang glslang::SPIRV glslang::glslang-default-resource-limits spirv-cross-glsl)
 
 function(renderer_warnings target)
     if(MSVC)
@@ -102,7 +111,7 @@ if(RENDERER_BUILD_AUDIO)
     add_subdirectory(modules/audio)
 endif()
 
-foreach(module IN ITEMS tilemap collision particles environment presentation physics2d)
+foreach(module IN ITEMS tilemap collision particles environment presentation physics2d camera ui text)
     string(TOUPPER "${module}" module_upper)
     if(RENDERER_BUILD_${module_upper})
         add_subdirectory(modules/${module})
@@ -121,8 +130,11 @@ if(RENDERER_BUILD_OPENGL OR RENDERER_BUILD_VULKAN)
         DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
     FetchContent_MakeAvailable(glfw)
 
-    add_library(renderer_platform STATIC src/platform/window.cpp)
+    add_library(renderer_platform STATIC src/platform/window.cpp src/platform/window_ime.cpp)
     target_link_libraries(renderer_platform PUBLIC renderer_core PRIVATE glfw)
+    if(WIN32)
+        target_link_libraries(renderer_platform PRIVATE imm32 comctl32)
+    endif()
     target_compile_definitions(renderer_platform PRIVATE GLFW_INCLUDE_NONE)
     set_target_properties(renderer_platform PROPERTIES FOLDER "core")
     renderer_warnings(renderer_platform)
@@ -180,7 +192,7 @@ endif()
 if(RENDERER_INSTALL_SDK)
     # 静态库的私有链接依赖仍需随 SDK 提供，使用内部名称避免污染使用者命名空间。
     set(renderer_sdk_targets renderer_core)
-    foreach(module IN ITEMS animation interaction audio tilemap collision particles environment presentation physics2d)
+    foreach(module IN ITEMS animation interaction audio tilemap collision particles environment presentation physics2d camera ui text)
         if(TARGET renderer_${module})
             list(APPEND renderer_sdk_targets renderer_${module})
             install(DIRECTORY modules/${module}/include/renderer DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
@@ -191,6 +203,12 @@ if(RENDERER_INSTALL_SDK)
         spirv-cross-glsl spirv-cross-core)
     if(RENDERER_BUILD_PHYSICS2D)
         list(APPEND renderer_sdk_dependencies box2d)
+    endif()
+    if(RENDERER_BUILD_UI)
+        list(APPEND renderer_sdk_dependencies rmlui_core)
+    endif()
+    if(RENDERER_BUILD_UI OR RENDERER_BUILD_TEXT)
+        list(APPEND renderer_sdk_dependencies freetype)
     endif()
     if(RENDERER_BUILD_OPENGL OR RENDERER_BUILD_VULKAN)
         list(APPEND renderer_sdk_dependencies renderer_platform renderer_pipeline glfw)
@@ -234,7 +252,7 @@ if(RENDERER_INSTALL_SDK)
     install(DIRECTORY docs/ DESTINATION ${CMAKE_INSTALL_DATADIR}/renderer/docs
         FILES_MATCHING PATTERN "*.md")
     install(DIRECTORY examples/ DESTINATION ${CMAKE_INSTALL_DATADIR}/renderer/examples
-        FILES_MATCHING PATTERN "CMakeLists.txt" PATTERN "*.cpp" PATTERN "*.hpp" PATTERN "*.md")
+        FILES_MATCHING PATTERN "CMakeLists.txt" PATTERN "*.cpp" PATTERN "*.hpp" PATTERN "*.md" PATTERN "*.rml" PATTERN "*.rcss")
     install(FILES tests/example_tests.cmake tests/README.md DESTINATION ${CMAKE_INSTALL_DATADIR}/renderer/tests)
     install(DIRECTORY third_party/licenses/ DESTINATION ${CMAKE_INSTALL_DATADIR}/renderer/third_party/licenses)
 endif()

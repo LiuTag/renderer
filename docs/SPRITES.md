@@ -236,4 +236,10 @@ ctest --test-dir build/development -C Release --output-on-failure
 .\build\development\Release\development_sprite.exe --threaded
 ```
 
-地图分块/瓦片、[自动流式加载](STREAMING.md)、轻量碰撞、图片粒子、昼夜天气和遮挡/闪白/描边/接触阴影已通过[图片世界模块](WORLD_MODULES.md)提供，音频见[音乐与音效](AUDIO.md)。`renderer_world_demo` 展示这些模块协作。导航、纸片骨骼、UI/中文字体、存档和生存/制作/背包/AI 玩法仍需应用或后续模块实现。局部点光源/聚光灯已有，受光图片需设置 `SpriteDesc::unlit=false`。
+地图分块/瓦片、[自动流式加载](STREAMING.md)、轻量碰撞、图片粒子、昼夜天气和遮挡/闪白/描边/接触阴影已通过[图片世界模块](WORLD_MODULES.md)提供，音频见[音乐与音效](AUDIO.md)。`renderer_world_demo` 展示这些模块协作。屏幕控件见[UI 模块](UI.md)，世界名字牌/路牌/伤害数字见[文字模块](TEXT.md)，中文需要应用提供相应字体。导航、纸片骨骼、存档和生存/制作/背包/AI 玩法仍需应用或后续模块实现。局部点光源/聚光灯已有，受光图片需设置 `SpriteDesc::unlit=false`。
+
+## 数组图片、压缩与距离场
+
+SpriteDesc::textureLayer 选择纹理数组层，SpriteRenderer::textureLayer 可逐实例覆盖（默认 UINT32_MAX 使用资源层）。相同资源/材质的不同层共享绘制批次；UV 矩形/翻转/裁剪和透明排序规则不变。CPU 拾取按实际层和原点读取 BC 块 Alpha。DDS、离线工具及尺寸/格式约束见[纹理说明](TEXTURES.md)。
+
+SpriteDesc::distanceFieldRange>0 表示 Alpha 是规范像素范围的 SDF，实例 edgeSoftness 控制抗锯齿，outlineWidth 对 SDF 是外描边。普通位图仍采用内描边。CPU SDF 拾取以距离 0.5 为内轮廓，忽略 GPU 屏幕导数及外描边；世界文字使用[独立 text 模块](TEXT.md)生成这些精灵。

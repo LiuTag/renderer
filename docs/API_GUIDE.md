@@ -109,7 +109,7 @@ auto glass = assets.createMaterial(description);
 
 默认 SortedAlpha 的透明排序是物体/submesh 级近似，交叉或相互穿透的透明表面不保证逐像素正确。可设置 `view.transparency = TransparencyMode::WeightedBlendedOIT` 使用加权无序透明，此时按材质/网格合批，并通过颜色累积和透过率合成到 HDR。该模式是近似合成，开启方法、阶段及精度/显存取舍见 [OIT 说明](OIT.md)。
 
-手工 `TextureDesc` 使用左下原点 RGBA8；`loadTexture()` 会翻转解码图片以符合该约定。glTF 保留像素与 UV 的配套约定，不应额外手动翻转。最终 `Renderer::readback()` 返回左上原点、显示编码的 RGBA8，与手工上传行序不同。
+手工 `TextureDesc` 默认使用左下原点 RGBA8；Alpha8、显式 mip、BC 和数组见[纹理说明](TEXTURES.md)。`loadTexture()` 会翻转普通解码图片，DDS 保留其自带格式/原点，采样自动处理；glTF 保留像素与 UV 的配套约定，不应额外手动翻转。最终 `Renderer::readback()` 返回左上原点、显示编码的 RGBA8，与手工上传行序不同。
 
 可设置 `view.antiAliasing = AntiAliasing::FXAA` 开启 ToneMap 后的画面抗锯齿，默认 None；可以逐帧切换，与排序透明、OIT 和独立渲染线程兼容。不会改变网格或 RHI 采样数。颜色空间、代价和示例见[FXAA 说明](ANTI_ALIASING.md)。
 

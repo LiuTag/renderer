@@ -109,8 +109,8 @@ cmake --build build/windows --config Release --target renderer_offscreen_demo --
 安装 SDK 后可独立配置；保留相邻的 `examples/common` 图集源码：
 
 ```powershell
-cmake -S build/windows/sdk/share/renderer/examples/offscreen -B build/windows/offscreen-sdk `
-  -DCMAKE_PREFIX_PATH=C:/projects/chatgpt/renderer/build/windows/sdk `
+cmake -S C:/SDK/renderer/share/renderer/examples/offscreen -B build/windows/offscreen-sdk `
+  -DCMAKE_PREFIX_PATH=C:/SDK/renderer `
   -DRENDERER_VULKAN_TESTS=ON -DRENDERER_GL_TESTS=ON
 cmake --build build/windows/offscreen-sdk --config Release --parallel 6
 ctest --test-dir build/windows/offscreen-sdk -C Release --output-on-failure

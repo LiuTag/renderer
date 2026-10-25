@@ -7,6 +7,7 @@
 #include "renderer/handle.hpp"
 #include "renderer/math.hpp"
 #include "renderer/shader.hpp"
+#include "renderer/texture_region.hpp"
 #include <cstddef>
 #include <functional>
 #include <memory>
@@ -35,7 +36,25 @@ using PipelineHandle = Handle<PipelineTag>;
 using BindingGroupHandle = Handle<GroupTag>;
 using QueryHandle = Handle<QueryTag>;
 /** @brief RHI 纹理的颜色、浮点或深度存储格式。 */
-enum class Format { Rgba8, Rgba8Srgb, Rgba16Float, Rgba32Float, R32Float, Depth32Float };
+enum class Format {
+    Rgba8,
+    Rgba8Srgb,
+    Rgba16Float,
+    Rgba32Float,
+    R32Float,
+    Depth32Float,
+    Bc1,
+    Bc1Srgb,
+    Bc2,
+    Bc2Srgb,
+    Bc3,
+    Bc3Srgb,
+    Bc4,
+    Bc5,
+    Bc7,
+    Bc7Srgb,
+    R8
+};
 // Upload 用于 CPU 写入的持久映射缓冲；Readback 用于诊断回读，Device 由 GPU 使用。
 /** @brief GPU 专用、CPU 上传或诊断回读的缓冲内存使用方式。 */
 enum class Memory { Device, Upload, Readback };
@@ -129,6 +148,8 @@ struct TextureDesc {
     uint32_t width = 1, height = 1, mipLevels = 1;
     Format format = Format::Rgba8;
     std::string name;
+    uint32_t layers = 1;       ///< 数组层数量，必须不超过设备上限。
+    bool arrayTexture = false; ///< 单层也强制数组类型；layers>1 自动为数组。
 };
 /**
  * @brief 不可变过滤、寻址、mip、边框颜色与深度比较采样配置。
@@ -240,6 +261,7 @@ struct ResourceBarrier {
 struct TextureCopy {
     uint32_t sourceMip = 0, destinationMip = 0, sourceX = 0, sourceY = 0, destinationX = 0,
              destinationY = 0, width = 0, height = 0;
+    uint32_t sourceLayer = 0, destinationLayer = 0, layerCount = 1; ///< 相对于视图的数组层范围。
 };
 // 设备范围内单调递增的提交标记，不能拿到另一台设备上查询或等待。
 /**
@@ -255,6 +277,11 @@ struct CompletionToken {
         return owner != 0;
     }
 };
+/** @brief 设备累计上传统计；提交/等待仅指资源上传，不含普通绘制与主动回读。 */
+struct UploadStatistics {
+    uint64_t calls = 0, bytes = 0, submissions = 0, waits = 0;
+    uint64_t stagingAllocations = 0, stagingReuses = 0, pooledStagingBytes = 0;
+};
 /**
  * @brief 实际后端标识、资源限制、对齐要求及可用功能。
  */
@@ -265,6 +292,7 @@ struct DeviceCaps {
     uint32_t maxSampledTextures = 0, maxUniformBindings = 0, maxStorageBindings = 0,
              maxImageBindings = 0;
     uint32_t uniformAlignment = 1, storageAlignment = 1, maxComputeInvocations = 0;
+    uint32_t maxTextureArrayLayers = 256; ///< 最大二维纹理数组层数。
     bool compute = true, indirectDraw = true, timestamps = true, persistentMapping = true;
 };
 /**
@@ -527,6 +555,23 @@ class CommandEncoder {
  */
 class Device {
   public:
+    /** @brief 开始合并资源传输，CPU 数据在 upload 返回前复制；不可嵌套。@return 无。 */
+    void beginUploadBatch();
+    /** @brief 提交当前上传批次，GPU 可异步执行，后续同设备命令自动有序。
+     * @return 完成标记，空批次可为空；提交绘制、waitIdle 或回读会先发布传输，仍需配对结束批次。 */
+    CompletionToken endUploadBatch();
+    /** @brief 查询设备累计上传与暂存池统计。@return 独立统计副本，须在设备线程调用。 */
+    UploadStatistics uploadStatistics() const;
+    /** @brief 更新未压缩纹理的局部像素，可与当前传输批次合并。
+     * @param texture RGBA8/R8 纹理或视图。@param region 当前 mip 的像素矩形。
+     * @param pixels 紧密区域载荷，调用期间复制。@param mipLevel 相对 mip。@param layer 相对数组层。
+     * @return 无；写入与后续同设备命令有序。 */
+    void uploadRegion(TextureHandle texture, TextureRegion region, std::span<const uint8_t> pixels,
+                      uint32_t mipLevel = 0, uint32_t layer = 0);
+    /** @brief 将纹理区域作为资源传输拷贝，可与当前批次合并。
+     * @param source 源纹理。@param destination 目标纹理。@param region 格式一致且不重叠的区域。
+     * @return 无；不同于 CommandEncoder，此操作直接在设备线程记录传输。 */
+    void copyTexture(TextureHandle source, TextureHandle destination, const TextureCopy &region);
     /**
      * @brief 创建占有窗口上下文的 OpenGL 设备。
      * @param window 有效且未绑定其他 Device/Renderer 的窗口。
@@ -600,20 +645,25 @@ class Device {
     BufferHandle createBuffer(const BufferDesc &description,
                               std::span<const std::byte> initial = {});
     /**
-     * @brief 按尺寸、格式与 mip 数分配纹理存储。
-     * @param description 有效的二维纹理描述。
+     * @brief 按尺寸、格式、层数与 mip 数分配纹理存储。
+     * @param description 有效的二维或二维数组描述；压缩格式需设备支持。
      * @return 当前设备的新纹理句柄；内容需后续上传或写入。
      */
     TextureHandle createTexture(const TextureDesc &description);
     // 视图共享底层存储；销毁原纹理句柄不影响仍然存活的视图。
     /**
-     * @brief 创建共享底层存储的 mip 视图；销毁原句柄不影响存活视图。
+     * @brief 创建共享底层存储的 mip/数组层视图；销毁原句柄不影响存活视图。
      * @param texture 同一设备的源纹理或视图。
      * @param firstMip 相对于源纹理/视图的首个 mip。
      * @param mipCount 视图包含的正 mip 层数。
+     * @param firstLayer 相对于源纹理/视图的首个数组层。
+     * @param layerCount 正层数，0 表示剩余全部层。
+     * @param arrayView true 强制数组维度，即使仅有一层；否则单层视图为二维。
      * @return 独立管理生命周期的新纹理视图句柄。
      */
-    TextureHandle createTextureView(TextureHandle texture, uint32_t firstMip, uint32_t mipCount);
+    TextureHandle createTextureView(TextureHandle texture, uint32_t firstMip, uint32_t mipCount,
+                                    uint32_t firstLayer = 0, uint32_t layerCount = 0,
+                                    bool arrayView = false);
     /**
      * @brief 创建不可变纹理采样器。
      * @param description 过滤、寻址、mip 与深度比较设置。
@@ -699,16 +749,18 @@ class Device {
      */
     void upload(BufferHandle buffer, size_t offset, std::span<const std::byte> data);
     /**
-     * @brief 上传指定 mip 的完整 RGBA8 图像。
-     * @param texture Rgba8 或 Rgba8Srgb 目标纹理。
-     * @param rgba8 左下原点、紧密排列的 RGBA8 像素，大小须匹配 mip 尺寸。
+     * @brief 上传指定数组层/mip 的完整图像或压缩块载荷。
+     * @param texture RGBA8 或 BC 格式的目标纹理/视图。
+     * @param rgba8 紧密 RGBA8 或 BC 块行，长度须匹配 mip；RHI 不转换行序。
      * @param mipLevel 相对于纹理或视图的 mip 下标。
+     * @param layer 相对于纹理或视图的数组层下标。
      * @return 无。
      */
-    void upload(TextureHandle texture, std::span<const uint8_t> rgba8, uint32_t mipLevel = 0);
+    void upload(TextureHandle texture, std::span<const uint8_t> rgba8, uint32_t mipLevel = 0,
+                uint32_t layer = 0);
     /**
      * @brief 由基准层内容生成其余 mip 层。
-     * @param texture 已分配多个 mip 且已初始化基准层的纹理。
+     * @param texture 已初始化所有数组基准层的未压缩纹理；BC 需离线提供 mip。
      * @return 无。
      */
     void generateMipmaps(TextureHandle texture);
@@ -723,9 +775,10 @@ class Device {
     /**
      * @brief 同步回读纹理基准层，转换为 RGBA8。
      * @param texture 要回读的有效纹理或视图。
+     * @param layer 相对于纹理或视图的数组层下标。
      * @return 左上原点的 RGBA8 图像。
      */
-    RgbaImage readTexture(TextureHandle texture);
+    RgbaImage readTexture(TextureHandle texture, uint32_t layer = 0);
     // 在设备线程验证并回放命令，返回完成标记；返回时 GPU 可能仍在执行。
     /**
      * @brief 在设备线程验证并回放命令，GPU 可异步执行。

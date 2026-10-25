@@ -13,7 +13,11 @@
 | 第一次接入并显示三维物体 | 第 1–4 节，以及 `development_scene` |
 | 不创建应用窗口并保存渲染图片 | [离屏渲染与 PNG](OFFSCREEN.md)，以及 `examples/offscreen` |
 | 模型查看器、交互相机和编辑工具 | 第 5–9 节，以及 `scene_app.cpp` |
+| 可复用的轨道/跟随/自由相机 | [相机模块](CAMERA.md)、CPU 示例及 game 的 Follow 接入 |
+| 游戏 HUD、菜单、背包与基础控件 | [UI 模块](UI.md)、RML/RCSS 皮肤及窗口/离屏示例 |
+| 场景路牌、名字牌、伤害数字 | [世界文字](TEXT.md)、独立 FreeType 字形图集及窗口/离屏示例 |
 | 图片角色、树木与三维地面结合的游戏 | [Sprite 专章](SPRITES.md)，以及 `development_sprite` |
+| 将物理、动画、流式地图与音频组成完整应用 | [森林营地综合示例](../examples/game/README.md)，以及 application/audio_system 源码 |
 | 播放音乐、音效或添加空间声音 | [音频专章](AUDIO.md)，以及 `renderer_audio_demo` |
 | 自定义 Shader 和 GPU 计算 | 第 10–11 节，以及 `development_compute` |
 | 自定义绘制、后处理和渲染图 | 第 11–12 节，以及 `development_graph` |
@@ -385,6 +389,8 @@ view.cameraNode = cameraNode;
 透视相机要求 `0 < verticalFov < radians(179)`、`nearPlane > 0` 且 `farPlane > nearPlane`。近裁剪面过近而远裁剪面过远会降低深度精度，优先让范围覆盖实际场景。
 
 正交相机使用 `camera.projection = Camera::Projection::Orthographic` 和正的 `orthographicHeight`，宽度由宽高比决定。固定 aspectRatio 会保持指定比例，窗口改变时不会自动替换为新比例；需要跟随视口时保持为 0。
+
+需要可复用的操作器时，链接 `renderer::camera` 并使用 `CameraController`。应用将键鼠事件转换为旋转/平移/移动/缩放输入，每帧在角色移动之后调用 `setTarget`、`update`、`apply`，再提取快照。支持 Orbit、Follow、Free、指数平滑、缩放/俯仰限幅及父节点变换；完整接口和输入单位见[相机控制](CAMERA.md)。
 
 ### 7.2 输入回调更新状态，主循环更新场景
 
@@ -858,3 +864,9 @@ ctest --preset windows-gpu-tests --output-on-failure
 ## 扩展到图片世界
 
 在 Sprite/动画/拾取基础之上，使用 `SpriteBatch` 承载地图和粒子；按需链接 tilemap、collision、particles、environment、presentation。完整接口、更新次序、参数、生命周期及功能边界见[图片世界模块](WORLD_MODULES.md)。可运行的 `examples/world` 同时支持两种后端、源码构建和独立 SDK 构建，详见[示例说明](../examples/world/README.md)。
+
+## 渲染基础能力增强
+
+普通资源读取可使用 [AssetLoader](ASSET_LOADING.md)，GPU 上传由 RendererConfig 的独立预算限制；完整包卸载后旧快照仍有效。[内存统计与增量上传](DIAGNOSTICS.md)解释静态实例复用、实际上传量与调试面板。
+
+[材质与实时纹理](RENDERING_EXTENSIONS.md)介绍顶点/表面函数、加色/预乘混合、多相机直接输出至 UI、字形缓存管理和 Windows 中文组合输入。完整可运行的公开 SDK 接入在 [examples/features](../examples/features/README.md)。

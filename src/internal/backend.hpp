@@ -47,6 +47,9 @@ class Backend {
      * @return 后端与设备描述字符串。
      */
     virtual DeviceInfo deviceInfo() const = 0;
+    virtual RendererMemoryStats memoryStatistics() const = 0;
+    virtual RenderTexture createRenderTexture(const OffscreenConfig &target) = 0;
+    virtual RenderStats drawToTexture(PreparedFrame frame, const RenderTexture &target) = 0;
     /**
      * @brief 同步回读最终输出。
      * @return 左上原点、显示编码的 RGBA8 图像。

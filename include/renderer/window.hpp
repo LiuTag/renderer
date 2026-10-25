@@ -170,6 +170,14 @@ class Window {
      * @return 空格键按下时为 true。
      */
     bool spacePressed() const;
+    /** @brief 更新输入法可编辑区域，创建线程调用。@param area 客户区屏幕坐标，active=false
+     * 取消预编辑。
+     * @return 无；Windows 支持原生组合/候选窗定位，其他平台保留普通已提交字符输入。 */
+    void setTextInputArea(const TextInputArea &area);
+    /** @brief 读取系统剪贴板文本，创建线程调用。@return UTF-8 文本，没有文本时为空。 */
+    std::string clipboardText() const;
+    /** @brief 写入系统剪贴板文本，创建线程调用。@param text UTF-8 文本，不含 NUL。@return 无。 */
+    void setClipboardText(const std::string &text);
 
   private:
     /// 内部实现前置声明，公共头文件仅持有不透明指针。

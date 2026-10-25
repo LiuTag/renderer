@@ -11,6 +11,8 @@ struct SpriteViewSnapshot::Impl {
     Mat4 vp, inverse;
     uint32_t width = 0, height = 0;
     std::vector<SpriteViewItem> sprites;
+    detail::AabbIndex index;
+    bool indexed = true;
 };
 SpriteViewSnapshot::SpriteViewSnapshot() = default;
 SpriteViewSnapshot::~SpriteViewSnapshot() = default;
@@ -31,15 +33,27 @@ Mat4 SpriteViewSnapshot::inverseViewProjection() const {
 std::pair<uint32_t, uint32_t> SpriteViewSnapshot::viewportSize() const {
     return impl_ ? std::pair{impl_->width, impl_->height} : std::pair{0u, 0u};
 }
+std::vector<uint32_t> SpriteViewSnapshot::rayCandidates(Vec3 origin, Vec3 direction) const {
+    if (!finite(origin) || !finite(direction) || dot(direction, direction) <= 0)
+        throw std::invalid_argument("Invalid spatial ray");
+    if (!impl_)
+        return {};
+    if (impl_->indexed)
+        return impl_->index.query(
+            [&](const AABB &b) { return detail::AabbIndex::ray(b, origin, direction); });
+    std::vector<uint32_t> ids(impl_->sprites.size());
+    std::iota(ids.begin(), ids.end(), 0u);
+    return ids;
+}
 SpriteViewSnapshot RenderSnapshot::spriteView(const RenderView &view, uint32_t width,
                                               uint32_t height) const {
     if (view.transparency != TransparencyMode::SortedAlpha &&
         view.transparency != TransparencyMode::WeightedBlendedOIT)
         throw std::invalid_argument("Invalid sprite view transparency mode");
     const auto &data = detail::SnapshotAccess::get(*this);
-    const auto camera = std::find_if(data.cameras.begin(), data.cameras.end(),
+    const auto camera = std::find_if(data.scene().cameras.begin(), data.scene().cameras.end(),
                                      [&](const auto &c) { return c.node == view.cameraNode; });
-    if (camera == data.cameras.end())
+    if (camera == data.scene().cameras.end())
         throw std::invalid_argument("Sprite view camera is absent or hidden");
     const auto inverse = camera->world.inverse();
     if (!inverse)
@@ -60,7 +74,7 @@ SpriteViewSnapshot RenderSnapshot::spriteView(const RenderView &view, uint32_t w
         float depth;
     };
     std::vector<Entry> entries;
-    entries.reserve(data.sprites.size() + data.batchSpriteCount);
+    entries.reserve(data.scene().sprites.size() + data.batchSpriteCount);
     const auto appendSprite = [&](const detail::SpriteRecord &sprite) {
         if (!(sprite.component.layerMask & camera->camera.cullingMask))
             return;
@@ -68,29 +82,60 @@ SpriteViewSnapshot RenderSnapshot::spriteView(const RenderView &view, uint32_t w
         if (!geometry || (view.frustumCulling && !frustum.intersects(geometry->bounds)))
             return;
         const auto &texture = sprite.sprite->material->texture;
+        const uint32_t layer = sprite.component.textureLayer == UINT32_MAX
+                                   ? sprite.sprite->description.textureLayer
+                                   : sprite.component.textureLayer;
+        if (layer >= texture->description.layers)
+            throw std::invalid_argument("Sprite array layer out of bounds");
         // 别名共享指针只公开公共 TextureDesc，拥有者仍是内部不可变纹理资源。
         std::shared_ptr<const TextureDesc> pixels(texture, &texture->description);
-        entries.push_back({{sprite.node, geometry->world, geometry->bounds, geometry->uvRect,
-                            sprite.component.tint, sprite.sprite->description.alphaMode,
-                            sprite.sprite->description.alphaCutoff, sprite.component.transparency,
-                            sprite.component.layerMask, std::move(pixels), sprite.instanceId},
-                           sprite.sort,
-                           -inverse->transformPoint(sprite.sort.point).z});
+        const auto materialColor = sprite.sprite->material->description.baseColor;
+        const auto tint = sprite.component.tint;
+        const Vec4 combined{tint.x * materialColor.x, tint.y * materialColor.y,
+                            tint.z * materialColor.z, tint.w * materialColor.w};
+        entries.push_back(
+            {{sprite.node, geometry->world, geometry->bounds, geometry->uvRect, combined,
+              sprite.sprite->description.alphaMode, sprite.sprite->description.alphaCutoff,
+              sprite.component.transparency, sprite.component.layerMask, std::move(pixels),
+              sprite.instanceId, sprite.sprite->description.distanceFieldRange, layer,
+              sprite.component.depthTest},
+             sprite.sort,
+             -inverse->transformPoint(sprite.sort.point).z});
     };
-    for (const auto &sprite : data.sprites)
-        appendSprite(sprite);
+    const bool indexed = view.spatialCulling && data.scene().indexed && view.frustumCulling;
+    const auto visible = [&](const AABB &b) { return frustum.intersects(b); };
+    if (indexed) {
+        for (auto i : data.scene().spriteIndex.query(visible))
+            appendSprite(data.scene().sprites[i]);
+    } else
+        for (const auto &sprite : data.scene().sprites)
+            appendSprite(sprite);
     for (const auto &batch : data.batches) {
         if (view.frustumCulling && !frustum.intersects(batch->bounds))
             continue;
-        for (const auto &sprite : batch->sprites)
-            appendSprite(sprite);
+        if (indexed) {
+            for (auto i : batch->index.query(visible))
+                appendSprite(batch->sprites[i]);
+        } else
+            for (const auto &sprite : batch->sprites)
+                appendSprite(sprite);
     }
     std::stable_sort(entries.begin(), entries.end(), [](const auto &a, const auto &b) {
+        if (a.item.depthTest != b.item.depthTest)
+            return a.item.depthTest;
         return detail::spriteSortLess(a.sort, a.depth, b.sort, b.depth);
     });
     result->sprites.reserve(entries.size());
     for (auto &entry : entries)
         result->sprites.push_back(std::move(entry.item));
+    result->indexed = view.spatialCulling;
+    if (result->indexed) {
+        std::vector<AABB> boxes;
+        boxes.reserve(result->sprites.size());
+        for (const auto &r : result->sprites)
+            boxes.push_back(r.bounds);
+        result->index.reset(boxes);
+    }
     SpriteViewSnapshot snapshot;
     snapshot.impl_ = std::move(result);
     return snapshot;

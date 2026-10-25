@@ -3,6 +3,7 @@
 
 #include "../../internal/pool.hpp"
 #include "../../internal/rhi_backend.hpp"
+#include "../../internal/texture_format.hpp"
 #include "../../internal/window.hpp"
 #include <algorithm>
 #include <array>
@@ -33,6 +34,8 @@ void range(size_t capacity, size_t offset, size_t size) {
 }
 VkFormat vkFormat(Format format) {
     switch (format) {
+    case Format::R8:
+        return VK_FORMAT_R8_UNORM;
     case Format::Rgba8:
         return VK_FORMAT_R8G8B8A8_UNORM;
     case Format::Rgba8Srgb:
@@ -45,10 +48,32 @@ VkFormat vkFormat(Format format) {
         return VK_FORMAT_R32_SFLOAT;
     case Format::Depth32Float:
         return VK_FORMAT_D32_SFLOAT;
+    case Format::Bc1:
+        return VK_FORMAT_BC1_RGBA_UNORM_BLOCK;
+    case Format::Bc1Srgb:
+        return VK_FORMAT_BC1_RGBA_SRGB_BLOCK;
+    case Format::Bc2:
+        return VK_FORMAT_BC2_UNORM_BLOCK;
+    case Format::Bc2Srgb:
+        return VK_FORMAT_BC2_SRGB_BLOCK;
+    case Format::Bc3:
+        return VK_FORMAT_BC3_UNORM_BLOCK;
+    case Format::Bc3Srgb:
+        return VK_FORMAT_BC3_SRGB_BLOCK;
+    case Format::Bc4:
+        return VK_FORMAT_BC4_UNORM_BLOCK;
+    case Format::Bc5:
+        return VK_FORMAT_BC5_UNORM_BLOCK;
+    case Format::Bc7:
+        return VK_FORMAT_BC7_UNORM_BLOCK;
+    case Format::Bc7Srgb:
+        return VK_FORMAT_BC7_SRGB_BLOCK;
     }
     throw std::invalid_argument("Invalid texture format");
 }
 size_t pixelBytes(Format format) {
+    if (format == Format::R8)
+        return 1;
     switch (format) {
     case Format::Rgba16Float:
         return 8;
@@ -398,6 +423,7 @@ std::shared_ptr<Context> initialize(GLFWwindow *window, bool debug) {
     features13.synchronization2 = VK_TRUE;
     VkPhysicalDeviceFeatures enabled{};
     enabled.independentBlend = VK_TRUE;
+    enabled.textureCompressionBC = c->features.textureCompressionBC;
     enabled.multiDrawIndirect = c->features.multiDrawIndirect;
     enabled.drawIndirectFirstInstance = c->features.drawIndirectFirstInstance;
     enabled.fragmentStoresAndAtomics = c->features.fragmentStoresAndAtomics;
@@ -479,7 +505,7 @@ struct Buffer {
 struct Texture {
     std::shared_ptr<Native> native;
     TextureDesc desc;
-    uint32_t baseMip = 0;
+    uint32_t baseMip = 0, baseLayer = 0;
     std::map<uint32_t, std::shared_ptr<Native>> singleMipViews;
 };
 struct Sampler {
@@ -540,6 +566,76 @@ struct VulkanDevice final : detail::DeviceBackend {
     std::vector<VkSemaphore> presentSemaphores;
     std::vector<bool> swapInitialized;
     bool attached = false;
+    bool uploadBatch = false;
+    std::optional<Submission> pendingUploads;
+    struct StagingBlock {
+        std::shared_ptr<Native> native;
+        size_t size = 0, cursor = 0;
+    };
+    std::vector<StagingBlock> stagingPool;
+    struct StagingRange {
+        std::shared_ptr<Native> native;
+        size_t offset;
+    };
+    StagingRange stagingRange(size_t bytes) {
+        if (!uploadBatch) {
+            ++uploadStats.stagingAllocations;
+            return {makeBuffer(bytes, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                                          VK_MEMORY_PROPERTY_HOST_COHERENT_BIT),
+                    0};
+        }
+        collect();
+        for (auto &b : stagingPool) {
+            if (b.native.use_count() == 1 && b.native->lastUse <= completed)
+                b.cursor = 0;
+            const auto offset = (b.cursor + 255) & ~size_t(255);
+            if (offset <= b.size && bytes <= b.size - offset) {
+                b.cursor = offset + bytes;
+                ++uploadStats.stagingReuses;
+                return {b.native, offset};
+            }
+        }
+        const size_t size = std::max<size_t>(1 << 20, (bytes + 255) & ~size_t(255));
+        auto native = makeBuffer(size, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                                           VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+        ++uploadStats.stagingAllocations;
+        if (size <= 8u * 1024 * 1024 &&
+            uploadStats.pooledStagingBytes + size <= 64u * 1024 * 1024) {
+            stagingPool.push_back({native, size, bytes});
+            uploadStats.pooledStagingBytes += size;
+        }
+        return {std::move(native), 0};
+    }
+    void beginUploadBatch() override {
+        checkThread();
+        verify(!uploadBatch, "Nested upload batch");
+        uploadBatch = true;
+    }
+    CompletionToken flushUploads() {
+        if (!pendingUploads)
+            return {};
+        auto s = std::move(*pendingUploads);
+        pendingUploads.reset();
+        ++uploadStats.submissions;
+        return queue(std::move(s));
+    }
+    CompletionToken endUploadBatch() override {
+        checkThread();
+        verify(uploadBatch, "No upload batch");
+        uploadBatch = false;
+        return flushUploads();
+    }
+    template <class F> void recordUpload(F action) {
+        if (uploadBatch) {
+            if (!pendingUploads)
+                pendingUploads = begin();
+            action(*pendingUploads);
+        } else {
+            ++uploadStats.submissions;
+            ++uploadStats.waits;
+            immediate(action);
+        }
+    }
 
     VulkanDevice(std::shared_ptr<renderer::detail::WindowState> state, bool debug)
         : window(std::move(state)) {
@@ -560,6 +656,7 @@ struct VulkanDevice final : detail::DeviceBackend {
         caps.version = std::to_string(VK_API_VERSION_MAJOR(p.apiVersion)) + "." +
                        std::to_string(VK_API_VERSION_MINOR(p.apiVersion));
         caps.maxTextureSize = l.maxImageDimension2D;
+        caps.maxTextureArrayLayers = l.maxImageArrayLayers;
         caps.maxColorAttachments = l.maxColorAttachments;
         caps.maxVertexAttributes = l.maxVertexInputAttributes;
         caps.maxVertexStride = l.maxVertexInputBindingStride;
@@ -578,6 +675,10 @@ struct VulkanDevice final : detail::DeviceBackend {
     }
     ~VulkanDevice() override {
         if (c) {
+            if (pendingUploads) {
+                release(*pendingUploads);
+                pendingUploads.reset();
+            }
             c->f.vkDeviceWaitIdle(c->device);
             while (!submissions.empty()) {
                 release(submissions.front());
@@ -602,6 +703,8 @@ struct VulkanDevice final : detail::DeviceBackend {
     }
     FormatFeatures formatFeatures(Format format) const override {
         checkThread();
+        if (detail::compressed(format) && !c->features.textureCompressionBC)
+            return {};
         VkFormatProperties p;
         c->i.vkGetPhysicalDeviceFormatProperties(c->physical, vkFormat(format), &p);
         const auto flags = p.optimalTilingFeatures;
@@ -765,17 +868,18 @@ struct VulkanDevice final : detail::DeviceBackend {
         return handle;
     }
     std::shared_ptr<Native> imageView(const std::shared_ptr<Native> &storage, Format format,
-                                      uint32_t base, uint32_t count) {
+                                      uint32_t base, uint32_t count, uint32_t baseLayer = 0,
+                                      uint32_t layers = 1, bool array = false) {
         auto view = std::make_shared<Native>(Native::View, c);
         view->parent = storage;
         VkImageViewCreateInfo info{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
         info.image = storage->image;
-        info.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        info.viewType = (array || layers > 1) ? VK_IMAGE_VIEW_TYPE_2D_ARRAY : VK_IMAGE_VIEW_TYPE_2D;
         info.format = vkFormat(format);
         info.subresourceRange = {VkImageAspectFlags(format == Format::Depth32Float
                                                         ? VK_IMAGE_ASPECT_DEPTH_BIT
                                                         : VK_IMAGE_ASPECT_COLOR_BIT),
-                                 base, count, 0, 1};
+                                 base, count, baseLayer, layers};
         vkCheck(c->f.vkCreateImageView(c->device, &info, nullptr, &view->view),
                 "Create Vulkan image view");
         return view;
@@ -790,6 +894,8 @@ struct VulkanDevice final : detail::DeviceBackend {
                    description.mipLevels <=
                        uint32_t(std::bit_width(std::max(description.width, description.height))),
                "Invalid texture mip count");
+        verify(description.layers && description.layers <= caps.maxTextureArrayLayers,
+               "Texture array layer count exceeds device limit");
         auto features = formatFeatures(description.format);
         verify(features.sampled, "Texture format is not supported");
         auto storage = std::make_shared<Native>(Native::Storage, c);
@@ -798,7 +904,7 @@ struct VulkanDevice final : detail::DeviceBackend {
         info.format = vkFormat(description.format);
         info.extent = {description.width, description.height, 1};
         info.mipLevels = description.mipLevels;
-        info.arrayLayers = 1;
+        info.arrayLayers = description.layers;
         info.samples = VK_SAMPLE_COUNT_1_BIT;
         info.tiling = VK_IMAGE_TILING_OPTIMAL;
         info.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
@@ -822,7 +928,7 @@ struct VulkanDevice final : detail::DeviceBackend {
         vkCheck(c->f.vkBindImageMemory(c->device, storage->image, storage->memory, 0),
                 "Bind Vulkan image memory");
         // RHI 图片统一使用 GENERAL，避免视图与缓存绑定组隐藏的布局状态；范围屏障负责可见性。
-        immediate([&](Submission &s) {
+        recordUpload([&](Submission &s) {
             use(s, storage);
             VkImageMemoryBarrier2 barrier{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2};
             barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
@@ -835,30 +941,41 @@ struct VulkanDevice final : detail::DeviceBackend {
                 VkImageAspectFlags(description.format == Format::Depth32Float
                                        ? VK_IMAGE_ASPECT_DEPTH_BIT
                                        : VK_IMAGE_ASPECT_COLOR_BIT),
-                0, description.mipLevels, 0, 1};
+                0, description.mipLevels, 0, description.layers};
             VkDependencyInfo dependency{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
             dependency.imageMemoryBarrierCount = 1;
             dependency.pImageMemoryBarriers = &barrier;
             c->f.vkCmdPipelineBarrier2(s.command, &dependency);
         });
-        return textures.create(Texture{
-            imageView(storage, description.format, 0, description.mipLevels), description, 0});
+        return textures.create(
+            Texture{imageView(storage, description.format, 0, description.mipLevels, 0,
+                              description.layers, detail::array(description)),
+                    description, 0, 0});
     }
-    TextureHandle createTextureView(TextureHandle source, uint32_t firstMip,
-                                    uint32_t mipCount) override {
+    TextureHandle createTextureView(TextureHandle source, uint32_t firstMip, uint32_t mipCount,
+                                    uint32_t firstLayer, uint32_t layerCount,
+                                    bool arrayView) override {
         checkThread();
         const auto &texture = textures.get(source);
         verify(mipCount && firstMip < texture.desc.mipLevels &&
                    mipCount <= texture.desc.mipLevels - firstMip,
                "Invalid texture view mip range");
+        if (!layerCount && firstLayer < texture.desc.layers)
+            layerCount = texture.desc.layers - firstLayer;
+        verify(firstLayer < texture.desc.layers && layerCount &&
+                   layerCount <= texture.desc.layers - firstLayer,
+               "Invalid texture view layer range");
         auto description = texture.desc;
+        description.layers = layerCount;
+        description.arrayTexture = arrayView || layerCount > 1;
         description.width = std::max(1u, description.width >> firstMip);
         description.height = std::max(1u, description.height >> firstMip);
         description.mipLevels = mipCount;
         const auto base = texture.baseMip + firstMip;
-        return textures.create(
-            Texture{imageView(texture.native->parent, description.format, base, mipCount),
-                    description, base});
+        return textures.create(Texture{imageView(texture.native->parent, description.format, base,
+                                                 mipCount, texture.baseLayer + firstLayer,
+                                                 layerCount, detail::array(description)),
+                                       description, base, texture.baseLayer + firstLayer});
     }
     SamplerHandle createSampler(const SamplerDesc &description) override {
         checkThread();
@@ -906,7 +1023,8 @@ struct VulkanDevice final : detail::DeviceBackend {
         if (auto found = texture.singleMipViews.find(mip); found != texture.singleMipViews.end())
             return found->second;
         auto native =
-            imageView(texture.native->parent, texture.desc.format, texture.baseMip + mip, 1);
+            imageView(texture.native->parent, texture.desc.format, texture.baseMip + mip, 1,
+                      texture.baseLayer, texture.desc.layers, detail::array(texture.desc));
         texture.singleMipViews.emplace(mip, native);
         return native;
     }
@@ -957,52 +1075,162 @@ struct VulkanDevice final : detail::DeviceBackend {
         range(buffer.desc.size, offset, data.size());
         if (data.empty())
             return;
-        if (buffer.native->lastUse > completed)
+        ++uploadStats.calls;
+        uploadStats.bytes += data.size();
+        if (buffer.native->mapping && buffer.native->lastUse > completed) {
+            ++uploadStats.waits;
             wait({owner, buffer.native->lastUse});
+        }
         if (buffer.native->mapping) {
             std::memcpy(static_cast<std::byte *>(buffer.native->mapping) + offset, data.data(),
                         data.size());
             return;
         }
-        auto staging = makeBuffer(data.size(), VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
-                                                   VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-        std::memcpy(staging->mapping, data.data(), data.size());
-        immediate([&](Submission &s) {
-            use(s, staging);
+        auto staging = stagingRange(data.size());
+        std::memcpy(static_cast<std::byte *>(staging.native->mapping) + staging.offset, data.data(),
+                    data.size());
+        recordUpload([&](Submission &s) {
+            use(s, staging.native);
             use(s, buffer.native);
             memoryBarrier(s.command);
-            VkBufferCopy copy{0, offset, data.size()};
-            c->f.vkCmdCopyBuffer(s.command, staging->buffer, buffer.native->buffer, 1, &copy);
+            VkBufferCopy copy{staging.offset, offset, data.size()};
+            c->f.vkCmdCopyBuffer(s.command, staging.native->buffer, buffer.native->buffer, 1,
+                                 &copy);
             memoryBarrier(s.command);
         });
     }
-    void upload(TextureHandle handle, std::span<const uint8_t> pixels, uint32_t mip) override {
+    void upload(TextureHandle handle, std::span<const uint8_t> pixels, uint32_t mip,
+                uint32_t layer) override {
         checkThread();
         auto &texture = textures.get(handle);
-        verify(texture.desc.format == Format::Rgba8 || texture.desc.format == Format::Rgba8Srgb,
-               "RGBA8 upload requires an RGBA8 texture");
+        verify(detail::compressed(texture.desc.format) || texture.desc.format == Format::R8 ||
+                   texture.desc.format == Format::Rgba8 || texture.desc.format == Format::Rgba8Srgb,
+               "Unsupported texture upload format");
+        verify(layer < texture.desc.layers, "Texture upload layer out of bounds");
         verify(mip < texture.desc.mipLevels, "Invalid upload mip");
         const auto w = std::max(1u, texture.desc.width >> mip),
                    h = std::max(1u, texture.desc.height >> mip);
-        verify(pixels.size() == size_t(w) * h * 4, "Texture upload size mismatch");
-        auto staging = makeBuffer(pixels.size(), VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
-                                                     VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-        std::memcpy(staging->mapping, pixels.data(), pixels.size());
-        immediate([&](Submission &s) {
-            use(s, staging);
+        verify(pixels.size() == detail::imageBytes(texture.desc.format, w, h),
+               "Texture upload size mismatch");
+        ++uploadStats.calls;
+        uploadStats.bytes += pixels.size();
+        auto staging = stagingRange(pixels.size());
+        std::memcpy(static_cast<std::byte *>(staging.native->mapping) + staging.offset,
+                    pixels.data(), pixels.size());
+        recordUpload([&](Submission &s) {
+            use(s, staging.native);
             use(s, texture.native);
             memoryBarrier(s.command);
             VkBufferImageCopy copy{};
-            copy.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, texture.baseMip + mip, 0, 1};
+            copy.bufferOffset = staging.offset;
+            copy.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, texture.baseMip + mip,
+                                     texture.baseLayer + layer, 1};
             copy.imageExtent = {w, h, 1};
-            c->f.vkCmdCopyBufferToImage(s.command, staging->buffer, texture.native->parent->image,
-                                        VK_IMAGE_LAYOUT_GENERAL, 1, &copy);
+            c->f.vkCmdCopyBufferToImage(s.command, staging.native->buffer,
+                                        texture.native->parent->image, VK_IMAGE_LAYOUT_GENERAL, 1,
+                                        &copy);
             memoryBarrier(s.command);
+        });
+    }
+    void uploadRegion(TextureHandle h, TextureRegion r, std::span<const uint8_t> pixels,
+                      uint32_t mip, uint32_t layer) override {
+        checkThread();
+        auto &t = textures.get(h);
+        verify((t.desc.format == Format::R8 || t.desc.format == Format::Rgba8 ||
+                t.desc.format == Format::Rgba8Srgb) &&
+                   mip < t.desc.mipLevels && layer < t.desc.layers && r.width && r.height,
+               "Invalid texture patch");
+        auto w = std::max(1u, t.desc.width >> mip), height = std::max(1u, t.desc.height >> mip);
+        range(w, r.x, r.width);
+        range(height, r.y, r.height);
+        verify(pixels.size() == detail::imageBytes(t.desc.format, r.width, r.height),
+               "Texture patch length mismatch");
+        auto staging = stagingRange(pixels.size());
+        std::memcpy(static_cast<std::byte *>(staging.native->mapping) + staging.offset,
+                    pixels.data(), pixels.size());
+        ++uploadStats.calls;
+        uploadStats.bytes += pixels.size();
+        recordUpload([&](Submission &s) {
+            use(s, staging.native);
+            use(s, t.native);
+            memoryBarrier(s.command);
+            VkBufferImageCopy cpy{};
+            cpy.bufferOffset = staging.offset;
+            cpy.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, t.baseMip + mip, t.baseLayer + layer,
+                                    1};
+            cpy.imageOffset = {int32_t(r.x), int32_t(r.y), 0};
+            cpy.imageExtent = {r.width, r.height, 1};
+            c->f.vkCmdCopyBufferToImage(s.command, staging.native->buffer, t.native->parent->image,
+                                        VK_IMAGE_LAYOUT_GENERAL, 1, &cpy);
+            memoryBarrier(s.command);
+        });
+    }
+    void recordCopy(Submission &submission, TextureHandle src, TextureHandle dst,
+                    const TextureCopy &r) {
+        auto &source = textures.get(src);
+        auto &destination = textures.get(dst);
+        verify(r.width && r.height && r.layerCount && r.sourceLayer < source.desc.layers &&
+                   r.destinationLayer < destination.desc.layers &&
+                   r.layerCount <= source.desc.layers - r.sourceLayer &&
+                   r.layerCount <= destination.desc.layers - r.destinationLayer,
+               "Invalid texture copy array range");
+        verify(!detail::compressed(source.desc.format) ||
+                   !(r.sourceX % 4 || r.sourceY % 4 || r.destinationX % 4 || r.destinationY % 4),
+               "Compressed copy origin must align to blocks");
+        verify(source.desc.format == destination.desc.format &&
+                   r.sourceMip < source.desc.mipLevels &&
+                   r.destinationMip < destination.desc.mipLevels,
+               "Texture copy formats or mip levels differ");
+        const auto sw = std::max(1u, source.desc.width >> r.sourceMip),
+                   sh = std::max(1u, source.desc.height >> r.sourceMip),
+                   dw = std::max(1u, destination.desc.width >> r.destinationMip),
+                   dh = std::max(1u, destination.desc.height >> r.destinationMip);
+        range(sw, r.sourceX, r.width);
+        range(sh, r.sourceY, r.height);
+        range(dw, r.destinationX, r.width);
+        range(dh, r.destinationY, r.height);
+        verify(!detail::compressed(source.desc.format) ||
+                   detail::blockCopyExtent(r, sw, sh, dw, dh),
+               "Compressed copy extent must align or reach both image edges");
+        verify(source.native->parent != destination.native->parent ||
+                   source.baseMip + r.sourceMip != destination.baseMip + r.destinationMip ||
+                   source.baseLayer + r.sourceLayer + r.layerCount <=
+                       destination.baseLayer + r.destinationLayer ||
+                   destination.baseLayer + r.destinationLayer + r.layerCount <=
+                       source.baseLayer + r.sourceLayer ||
+                   r.sourceX + r.width <= r.destinationX || r.destinationX + r.width <= r.sourceX ||
+                   r.sourceY + r.height <= r.destinationY || r.destinationY + r.height <= r.sourceY,
+               "Overlapping texture copy");
+        VkImageCopy copy{};
+        const VkImageAspectFlags aspect = source.desc.format == Format::Depth32Float
+                                              ? VK_IMAGE_ASPECT_DEPTH_BIT
+                                              : VK_IMAGE_ASPECT_COLOR_BIT;
+        copy.srcSubresource = {aspect, source.baseMip + r.sourceMip,
+                               source.baseLayer + r.sourceLayer, r.layerCount};
+        copy.dstSubresource = {aspect, destination.baseMip + r.destinationMip,
+                               destination.baseLayer + r.destinationLayer, r.layerCount};
+        copy.srcOffset = {int32_t(r.sourceX), int32_t(r.sourceY), 0};
+        copy.dstOffset = {int32_t(r.destinationX), int32_t(r.destinationY), 0};
+        copy.extent = {r.width, r.height, 1};
+        use(submission, source.native);
+        use(submission, destination.native);
+        if (r.width && r.height)
+            c->f.vkCmdCopyImage(submission.command, source.native->parent->image,
+                                VK_IMAGE_LAYOUT_GENERAL, destination.native->parent->image,
+                                VK_IMAGE_LAYOUT_GENERAL, 1, &copy);
+    }
+    void copyTexture(TextureHandle src, TextureHandle dst, const TextureCopy &r) override {
+        checkThread();
+        recordUpload([&](Submission &submission) {
+            memoryBarrier(submission.command);
+            recordCopy(submission, src, dst, r);
+            memoryBarrier(submission.command);
         });
     }
     void generateMipmaps(TextureHandle handle) override;
     std::vector<std::byte> readBuffer(BufferHandle handle, size_t bytes, size_t offset) override {
         checkThread();
+        flushUploads();
         auto &buffer = buffers.get(handle);
         if (!bytes) {
             verify(offset <= buffer.desc.size, "Invalid read offset");
@@ -1027,7 +1255,7 @@ struct VulkanDevice final : detail::DeviceBackend {
         std::memcpy(result.data(), staging->mapping, bytes);
         return result;
     }
-    RgbaImage readTexture(TextureHandle handle) override;
+    RgbaImage readTexture(TextureHandle handle, uint32_t layer) override;
     CompletionToken submit(const std::vector<detail::Command> &commands) override;
     bool complete(CompletionToken token) override {
         checkThread();
@@ -1054,6 +1282,7 @@ struct VulkanDevice final : detail::DeviceBackend {
     }
     void waitIdle() override {
         checkThread();
+        flushUploads();
         vkCheck(c->f.vkDeviceWaitIdle(c->device), "Wait Vulkan device");
         collect();
     }
@@ -1125,7 +1354,8 @@ std::vector<ShaderBinding> pipelineLayout(const std::shared_ptr<Context> &c, Nat
                 slots.emplace(std::pair{binding.group, binding.binding}, Slot{binding, stage});
             if (!inserted) {
                 verify(it->second.binding.kind == binding.kind &&
-                           it->second.binding.byteSize == binding.byteSize,
+                           it->second.binding.byteSize == binding.byteSize &&
+                           it->second.binding.textureArray == binding.textureArray,
                        "Shader descriptor declarations disagree");
                 it->second.stages |= stage;
             }
@@ -1398,6 +1628,8 @@ std::optional<uint64_t> VulkanDevice::timestampResult(QueryHandle handle, uint32
 void VulkanDevice::generateMipmaps(TextureHandle handle) {
     checkThread();
     auto &texture = textures.get(handle);
+    verify(!detail::compressed(texture.desc.format),
+           "Compressed textures require authored mip levels");
     if (texture.desc.mipLevels == 1)
         return;
     VkFormatProperties properties;
@@ -1409,13 +1641,15 @@ void VulkanDevice::generateMipmaps(TextureHandle handle) {
                (VK_FORMAT_FEATURE_BLIT_SRC_BIT | VK_FORMAT_FEATURE_BLIT_DST_BIT |
                 VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT),
            "Texture format does not support linear mip generation");
-    immediate([&](Submission &s) {
+    recordUpload([&](Submission &s) {
         use(s, texture.native);
         memoryBarrier(s.command);
         for (uint32_t mip = 1; mip < texture.desc.mipLevels; ++mip) {
             VkImageBlit blit{};
-            blit.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, texture.baseMip + mip - 1, 0, 1};
-            blit.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, texture.baseMip + mip, 0, 1};
+            blit.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, texture.baseMip + mip - 1,
+                                   texture.baseLayer, texture.desc.layers};
+            blit.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, texture.baseMip + mip,
+                                   texture.baseLayer, texture.desc.layers};
             blit.srcOffsets[1] = {int32_t(std::max(1u, texture.desc.width >> (mip - 1))),
                                   int32_t(std::max(1u, texture.desc.height >> (mip - 1))), 1};
             blit.dstOffsets[1] = {int32_t(std::max(1u, texture.desc.width >> mip)),
@@ -1427,21 +1661,25 @@ void VulkanDevice::generateMipmaps(TextureHandle handle) {
         }
     });
 }
-RgbaImage VulkanDevice::readTexture(TextureHandle handle) {
+RgbaImage VulkanDevice::readTexture(TextureHandle handle, uint32_t layer) {
     checkThread();
+    flushUploads();
     auto &texture = textures.get(handle);
     verify(texture.desc.format != Format::Depth32Float, "Color readback requires a color texture");
+    verify(layer < texture.desc.layers, "Readback layer out of bounds");
     const size_t bpp = pixelBytes(texture.desc.format),
                  pixels = size_t(texture.desc.width) * texture.desc.height;
     verify(pixels <= std::numeric_limits<size_t>::max() / bpp, "Readback size overflow");
-    auto staging = makeBuffer(pixels * bpp, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
-                                                VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    auto staging =
+        makeBuffer(detail::imageBytes(texture.desc.format, texture.desc.width, texture.desc.height),
+                   VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
     immediate([&](Submission &s) {
         use(s, staging);
         use(s, texture.native);
         memoryBarrier(s.command);
         VkBufferImageCopy copy{};
-        copy.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, texture.baseMip, 0, 1};
+        copy.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, texture.baseMip,
+                                 texture.baseLayer + layer, 1};
         copy.imageExtent = {texture.desc.width, texture.desc.height, 1};
         c->f.vkCmdCopyImageToBuffer(s.command, texture.native->parent->image,
                                     VK_IMAGE_LAYOUT_GENERAL, staging->buffer, 1, &copy);
@@ -1449,13 +1687,34 @@ RgbaImage VulkanDevice::readTexture(TextureHandle handle) {
                       VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_HOST_BIT,
                       VK_ACCESS_2_HOST_READ_BIT);
     });
+    if (detail::compressed(texture.desc.format)) {
+        renderer::TextureDesc desc;
+        desc.width = texture.desc.width;
+        desc.height = texture.desc.height;
+        desc.srgb = false;
+        desc.compression = detail::compression(texture.desc.format);
+        auto count = detail::imageBytes(texture.desc.format, desc.width, desc.height);
+        desc.data.assign(static_cast<const uint8_t *>(staging->mapping),
+                         static_cast<const uint8_t *>(staging->mapping) + count);
+        auto raw = renderer::texture::decode(desc);
+        for (uint32_t y = 0; y < desc.height / 2; ++y)
+            for (uint32_t x = 0; x < desc.width * 4; ++x)
+                std::swap(raw.pixels[size_t(y) * desc.width * 4 + x],
+                          raw.pixels[size_t(desc.height - 1 - y) * desc.width * 4 + x]);
+        return {desc.width, desc.height, std::move(raw.pixels)};
+    }
     RgbaImage result{texture.desc.width, texture.desc.height, std::vector<uint8_t>(pixels * 4)};
     const auto *raw = static_cast<const uint8_t *>(staging->mapping);
     for (uint32_t y = 0; y < result.height; ++y)
         for (uint32_t x = 0; x < result.width; ++x) {
             const size_t source = (size_t(result.height - 1 - y) * result.width + x) * bpp;
             const size_t destination = (size_t(y) * result.width + x) * 4;
-            if (texture.desc.format == Format::Rgba8 || texture.desc.format == Format::Rgba8Srgb)
+            if (texture.desc.format == Format::R8) {
+                result.pixels[destination] = raw[source];
+                result.pixels[destination + 1] = result.pixels[destination + 2] = 0;
+                result.pixels[destination + 3] = 255;
+            } else if (texture.desc.format == Format::Rgba8 ||
+                       texture.desc.format == Format::Rgba8Srgb)
                 std::memcpy(result.pixels.data() + destination, raw + source, 4);
             else
                 for (size_t channel = 0; channel < 4; ++channel) {
@@ -1474,6 +1733,7 @@ RgbaImage VulkanDevice::readTexture(TextureHandle handle) {
 }
 CompletionToken VulkanDevice::submit(const std::vector<detail::Command> &commands) {
     checkThread();
+    flushUploads();
     collect();
     auto submission = begin();
     Pipeline *pipeline = nullptr;
@@ -1573,6 +1833,8 @@ CompletionToken VulkanDevice::submit(const std::vector<detail::Command> &command
                 use(submission, buffer.native);
             } else {
                 auto &texture = textures.get(entry->texture);
+                verify(slot.textureArray == detail::array(texture.desc),
+                       "Shader texture dimension does not match view");
                 if (rendering) {
                     auto overlaps = [&](TextureHandle attachment, uint32_t mip) {
                         const auto &other = textures.get(attachment);
@@ -1672,6 +1934,8 @@ CompletionToken VulkanDevice::submit(const std::vector<detail::Command> &command
                         auto attachment = [&](TextureHandle handle, uint32_t mip, LoadOp load,
                                               StoreOp store, bool depth) {
                             auto &texture = textures.get(handle);
+                            verify(!detail::array(texture.desc),
+                                   "Rendering requires a 2D single-layer view");
                             verify((texture.desc.format == Format::Depth32Float) == depth,
                                    "Attachment format/type mismatch");
                             auto view = singleMipView(texture, mip);
@@ -1856,46 +2120,7 @@ CompletionToken VulkanDevice::submit(const std::vector<detail::Command> &command
                         }
                     } else if constexpr (std::is_same_v<T, detail::CopyTexture>) {
                         verify(!rendering, "Image copy cannot run inside rendering");
-                        auto &source = textures.get(value.source);
-                        auto &destination = textures.get(value.destination);
-                        const auto &r = value.region;
-                        verify(source.desc.format == destination.desc.format &&
-                                   r.sourceMip < source.desc.mipLevels &&
-                                   r.destinationMip < destination.desc.mipLevels,
-                               "Texture copy formats or mip levels differ");
-                        const auto sw = std::max(1u, source.desc.width >> r.sourceMip),
-                                   sh = std::max(1u, source.desc.height >> r.sourceMip),
-                                   dw = std::max(1u, destination.desc.width >> r.destinationMip),
-                                   dh = std::max(1u, destination.desc.height >> r.destinationMip);
-                        range(sw, r.sourceX, r.width);
-                        range(sh, r.sourceY, r.height);
-                        range(dw, r.destinationX, r.width);
-                        range(dh, r.destinationY, r.height);
-                        verify(source.native->parent != destination.native->parent ||
-                                   source.baseMip + r.sourceMip !=
-                                       destination.baseMip + r.destinationMip ||
-                                   r.sourceX + r.width <= r.destinationX ||
-                                   r.destinationX + r.width <= r.sourceX ||
-                                   r.sourceY + r.height <= r.destinationY ||
-                                   r.destinationY + r.height <= r.sourceY,
-                               "Overlapping texture copy");
-                        VkImageCopy copy{};
-                        const VkImageAspectFlags aspect = source.desc.format == Format::Depth32Float
-                                                              ? VK_IMAGE_ASPECT_DEPTH_BIT
-                                                              : VK_IMAGE_ASPECT_COLOR_BIT;
-                        copy.srcSubresource = {aspect, source.baseMip + r.sourceMip, 0, 1};
-                        copy.dstSubresource = {aspect, destination.baseMip + r.destinationMip, 0,
-                                               1};
-                        copy.srcOffset = {int32_t(r.sourceX), int32_t(r.sourceY), 0};
-                        copy.dstOffset = {int32_t(r.destinationX), int32_t(r.destinationY), 0};
-                        copy.extent = {r.width, r.height, 1};
-                        use(submission, source.native);
-                        use(submission, destination.native);
-                        if (r.width && r.height)
-                            c->f.vkCmdCopyImage(submission.command, source.native->parent->image,
-                                                VK_IMAGE_LAYOUT_GENERAL,
-                                                destination.native->parent->image,
-                                                VK_IMAGE_LAYOUT_GENERAL, 1, &copy);
+                        recordCopy(submission, value.source, value.destination, value.region);
                     } else if constexpr (std::is_same_v<T, detail::Barriers>) {
                         verify(!rendering, "Resource barriers must be outside rendering scopes");
                         std::vector<VkBufferMemoryBarrier2> bufferBarriers;
@@ -1949,7 +2174,8 @@ CompletionToken VulkanDevice::submit(const std::vector<detail::Command> &command
                                     VkImageAspectFlags(texture.desc.format == Format::Depth32Float
                                                            ? VK_IMAGE_ASPECT_DEPTH_BIT
                                                            : VK_IMAGE_ASPECT_COLOR_BIT),
-                                    texture.baseMip + barrier.firstMip, count, 0, 1};
+                                    texture.baseMip + barrier.firstMip, count, texture.baseLayer,
+                                    texture.desc.layers};
                                 imageBarriers.push_back(b);
                                 use(submission, texture.native);
                             } else {

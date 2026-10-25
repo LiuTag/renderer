@@ -32,6 +32,7 @@ struct ShaderBinding {
     BindingKind kind = BindingKind::UniformBuffer;
     uint32_t byteSize = 0, arraySize = 1; // 反射出的块最小字节数及描述符数量。
     std::vector<ShaderMember> members;
+    bool textureArray = false; ///< 采样/存储图像为二维数组，绑定时验证视图维度。
 };
 /**
  * @brief 一次着色器编译产生的 SPIR-V、资源反射及诊断名称。

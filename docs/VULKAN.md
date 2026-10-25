@@ -111,6 +111,6 @@ RHI 继续采用右手坐标、NDC 深度 `[0,1]`，上传图片为左下行序�
 
 当前已在 Windows / NVIDIA GeForce RTX 2080 Ti / Vulkan SDK 1.4.350.0 实测。自动检查覆盖低层计算、间接命令、资源/视图与图复用、透明/OIT、阴影/PBR、FXAA、Sprite、回读、线程、呈现/缩放/全屏，以及同一快照的 OpenGL/Vulkan 像素对比。其他 GPU、Linux 和 macOS 尚未实机验证；不代表跨设备的像素完全相等或性能结论。
 
-Vulkan 边框采样目前支持标准透明黑、实心黑和实心白，任意自定义边框色在使用 Border 寻址时会明确拒绝。后端沿用现有 RHI 的二维纹理、单层图片及单采样限制；MSAA、多窗口同设备共享资源、HDR 显示器输出和多 GPU 不在本次实现范围。当前呈现表面需支持 transfer destination 和 RGBA8/BGRA8 sRGB 格式。
+Vulkan 边框采样目前支持标准透明黑、实心黑和实心白，任意自定义边框色在使用 Border 寻址时会明确拒绝。后端支持二维/二维数组、BC 压缩、层视图与存储图像，附件保持单采样；数组附件需建立单层二维视图；MSAA、多窗口同设备共享资源、HDR 显示器输出和多 GPU 不在本次实现范围。当前呈现表面需支持 transfer destination 和 RGBA8/BGRA8 sRGB 格式。
 
 底层设计参考 [GLFW Vulkan 接入](https://www.glfw.org/docs/latest/vulkan_guide.html)与 [Khronos 同步说明](https://docs.vulkan.org/guide/latest/synchronization.html)，依赖来源见[第三方说明](../THIRD_PARTY.md)。

@@ -104,6 +104,15 @@ class RenderSnapshot {
  */
 class RenderExtractor {
   public:
+    /** @brief 配置 CPU 缓存，关闭时用于性能/正确性对照。@param enabled
+     * 是否复用未变化的场景快照。@return 无。 */
+    void setCachingEnabled(bool enabled);
+    /** @brief 回收当前场景根和派生数据缓存，已发布快照继续有效。
+     * @return 无；可在场景卸载后调用，立即释放提取器额外保留的资源引用。 */
+    void clearCache();
+    /** @brief 配置相机无关空间索引，关闭时仍可逐项渲染和拾取。@param enabled 是否构建 BVH。@return
+     * 无；清除当前场景缓存。 */
+    void setSpatialIndexEnabled(bool enabled);
     /**
      * @brief 创建场景提取器及其缓存。
      * @return 无（构造函数）。
