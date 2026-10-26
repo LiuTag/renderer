@@ -4,13 +4,13 @@
 
 动画、交互、音频、地图、碰撞、粒子、环境、表现、二维物理、相机控制、UI 和世界文字分别生成独立可选静态库。核心和两种图形后端不链接这些扩展；应用按需要选择组件。
 
-Visual Studio 解决方案中，`renderer_core`、启用的 `renderer_opengl` / `renderer_vulkan`、共用的 `renderer_platform` / `renderer_pipeline` 及 GLAD/Volk 实现目标归入 `core` 文件夹；十二个扩展及音频内部实现目标归入 `modules` 文件夹。示例和测试继续分别位于 `examples`、`tests`；这些逻辑分组不改变库的依赖关系、输出位置或 SDK 安装路径。
+Visual Studio 解决方案中，`renderer_core`、启用的 `renderer_opengl` / `renderer_vulkan`、共用的 `renderer_platform` / `renderer_pipeline` 及 GLAD/Volk/VMA 实现目标归入 `core` 文件夹；十二个扩展及音频内部实现目标归入 `modules` 文件夹。示例和测试继续分别位于 `examples`、`tests`；这些逻辑分组不改变库的依赖关系、输出位置或 SDK 安装路径。
 
 | CMake 目标 | 职责 | 直接依赖 | 默认构建 |
 | --- | --- | --- | --- |
 | `renderer::core` | 数学、资源、场景、快照、Sprite/图集、Billboard、排序、帧准备、Shader、RHI/RenderGraph 接口 | 现有 CPU 工具链依赖 | 是 |
 | `renderer::opengl` | OpenGL 4.5 设备与渲染器工厂 | core、共用平台/管线、GLAD | 是 |
-| `renderer::vulkan` | Vulkan 1.3 设备、交换链与渲染器工厂 | core、共用平台/管线、私有 Volk 对象 | 否，显式开启 |
+| `renderer::vulkan` | Vulkan 1.3 设备、交换链与渲染器工厂 | core、共用平台/管线、私有 Volk/VMA 对象 | 否，显式开启 |
 | `renderer::animation` | 序列帧、方向选择、播放状态、动画事件、更新精灵组件 | core | 是，可关闭 |
 | `renderer::interaction` | 屏幕射线、地面求交、Alpha 拾取、交互筛选 | core | 是，可关闭 |
 | `renderer::audio` | 音乐流、音效实例、混音分组、空间定位、播放事件 | core、私有 miniaudio 实现 | 是，可关闭 |

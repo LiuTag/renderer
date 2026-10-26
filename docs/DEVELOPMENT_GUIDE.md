@@ -1,30 +1,30 @@
-# 二次开发手册
+# Renderer SDK 二次开发指南
 
-本文面向使用 Renderer SDK 编写三维应用、模型查看器和自定义渲染流程的 C++ 开发者。内容以当前 **0.2.0、C++20、OpenGL 4.5 Core / Vulkan 1.3** 实现为准。示例默认使用 OpenGL，切换 Vulkan 只需调整窗口配置和工厂；阅读本文不需要接触原生图形 API 或 Shader 编译器的内部类型。
+本文面向使用**已安装 SDK**开发三维应用、图片风格游戏、模型查看器及专用 GPU 工具的 C++ 开发者，以 **0.2.0 / 2026-10-26 / C++20 / OpenGL 4.5 Core / Vulkan 1.3** 的公共接口为准。可以只拿安装目录完成接入，无需访问引擎私有头文件或下载第三方开发库。
 
-完成本手册中的示例后，可以独立完成：安装 SDK、创建交互场景、组织节点和资源、控制相机、导入模型、选择透明模式、处理异步提交，以及通过 RHI 和 RenderGraph 实现自定义 GPU 工作。
+SDK 默认将本指南安装到 **`<SDK>/share/renderer/docs/DEVELOPMENT_GUIDE.md`**，文档首页为 `<SDK>/share/renderer/README.md`；全部专章、示例源码和许可一起安装，本文的相对链接在源码树和完整 SDK 中均可使用。若供应方修改 `CMAKE_INSTALL_DATADIR`，以其实际目录为准。`find_package` 还提供 `renderer_DOCUMENTATION_DIR` 和 `renderer_DEVELOPMENT_GUIDE` 供工具定位文档。
 
-[返回文档导航](README.md) · [安装目录与 CMake 详解](SDK.md) · [公共接口速查](API_GUIDE.md)
+[文档导航](README.md) · [SDK 安装与目录详解](SDK.md) · [接口速查](API_GUIDE.md) · [功能边界](../IMPLEMENTATION.md) · [验证记录](VALIDATION.md)
+
+完成指南后，应能配置独立 CMake 工程、绘制并保存第一帧、管理场景/资源/模块、组织应用更新与渲染提交，以及排查线程、链接、颜色、字体和性能问题。基础使用路线不要求掌握原生 OpenGL/Vulkan；底层调用可另读[双后端源码导读](RENDERING_WALKTHROUGH.md)。
 
 ## 阅读路线
 
-| 开发目标 | 建议阅读 |
+| 开发目标 | 阅读位置与完整参考 |
 | --- | --- |
-| 第一次接入并显示三维物体 | 第 1–4 节，以及 `development_scene` |
-| 不创建应用窗口并保存渲染图片 | [离屏渲染与 PNG](OFFSCREEN.md)，以及 `examples/offscreen` |
-| 模型查看器、交互相机和编辑工具 | 第 5–9 节，以及 `scene_app.cpp` |
-| 可复用的轨道/跟随/自由相机 | [相机模块](CAMERA.md)、CPU 示例及 game 的 Follow 接入 |
-| 游戏 HUD、菜单、背包与基础控件 | [UI 模块](UI.md)、RML/RCSS 皮肤及窗口/离屏示例 |
-| 场景路牌、名字牌、伤害数字 | [世界文字](TEXT.md)、独立 FreeType 字形图集及窗口/离屏示例 |
-| 图片角色、树木与三维地面结合的游戏 | [Sprite 专章](SPRITES.md)，以及 `development_sprite` |
-| 将物理、动画、流式地图与音频组成完整应用 | [森林营地综合示例](../examples/game/README.md)，以及 application/audio_system 源码 |
-| 播放音乐、音效或添加空间声音 | [音频专章](AUDIO.md)，以及 `renderer_audio_demo` |
-| 自定义 Shader 和 GPU 计算 | 第 10–11 节，以及 `development_compute` |
-| 自定义绘制、后处理和渲染图 | 第 11–12 节，以及 `development_graph` |
-| 优化性能、管理内存和定位错误 | 第 9、13、14 节 |
-| 修改引擎源码或扩展接口 | 第 15 节和[架构说明](ARCHITECTURE.md) |
+| 安装后第一次接入，窗口/离屏取得图片 | 第 1–3 节；第 2.2 节完整 CMake + 第 3.4 节完整 main.cpp |
+| 场景、变换、资源和模型查看器 | 第 4–8 节，以及 [development 示例](../examples/development/CMakeLists.txt) |
+| 生命周期、独立渲染线程和提交结果 | 第 9 节；不可变快照与 GPU 完成语义 |
+| 自定义 Shader、Compute 和完整渲染图 | 第 10–12 节；development_compute / development_graph |
+| 性能、显存、Vulkan 提交复用与错误排查 | 第 13–14 节及 [诊断](DIAGNOSTICS.md)、[优化](OPTIMIZATION.md) |
+| SDK 业务扩展与引擎源码修改边界 | 第 15 节；源码修改只属于可选进阶路线 |
+| 后台加载、包卸载、DDS 与纹理数组 | 第 16 节及 [features](../examples/features/README.md)、[texture_text](../examples/texture_text/README.md) |
+| Sprite、Billboard、动画、交互和批次 | 第 17 节及 [Sprite](SPRITES.md) |
+| 相机、中文世界文字和 UI | 第 18–19 节及 [camera](CAMERA.md)、[text](TEXT.md)、[ui](UI.md) |
+| 地图、流式加载、物理、粒子、环境和音频 | 第 20–21 节及 [game 综合应用](../examples/game/README.md) |
+| 小地图/预览、应用架构和交付打包 | 第 22–24 节 |
 
-下文的短代码片段是局部用法，除特别说明外使用 `using namespace renderer;`，并假定对应的 `scene`、`assets`、`window`、`engine` 等对象已经创建。需要直接编译运行时，使用第 2 节的完整配套工程。
+除第 2.2 节和第 3.4 节标为完整工程的代码外，后续短代码块是局部用法，默认已有 `scene`、`assets`、`engine`、`view` 等对象并使用 `using namespace renderer;`；变量前提和所需组件在各节说明。业务保存、导航、AI 和玩法由应用定义。
 
 ## 1. 开发方式与能力边界
 
@@ -36,7 +36,7 @@
 | `rhi::Device` + `CommandEncoder` | 定义 Shader、管线、资源、命令及访问屏障 | 原生 API 映射、命令验证、完成标记及延迟销毁 | Compute、专用绘制、已有渲染框架接入 |
 | RHI + `RenderGraph` | 声明 Pass、完整访问关系和命令回调 | 依赖分析、无效 Pass 剔除、屏障和临时资源复用 | 多阶段绘制、后处理、自定义渲染流水线 |
 
-同一窗口在同一时间只能绑定一个高层 Renderer 或一个低层 Device。高层 Renderer 不公开其内部 Device、渲染图和颜色目标，SDK 当前也没有向高层流水线注册任意 Pass 的接口。需要完全控制 Shader 或增加绘制阶段时，可以独立使用 RHI/RenderGraph，或者按第 15 节修改引擎源码。
+同一窗口在同一时间只能绑定一个高层 Renderer 或一个低层 Device。高层 Renderer 不公开其内部 Device 和渲染图；公开的 RenderTexture 可作为独立实时颜色输出，但不暴露原生 GPU 句柄，SDK 当前也没有向高层流水线注册任意 Pass 的接口。需要完全控制 Shader 或增加绘制阶段时，可以独立使用 RHI/RenderGraph，或者按第 15 节修改引擎源码。
 
 ### 1.2 公共模块与头文件
 
@@ -56,109 +56,153 @@
 | `renderer/shader.hpp` | GLSL 编译、SPIR-V、反射和绑定映射 |
 | `renderer/rhi.hpp` | GPU 资源、Pipeline、Device 与命令录制 |
 | `renderer/render_graph.hpp` | 图资源、Pass 声明、编译与执行 |
+| `renderer/asset_loader.hpp`、`texture.hpp` | 异步资源、发布预算、DDS/BC 压缩、mip 与数组工具 |
+| `renderer/render_texture.hpp`、`overlay.hpp` | 同渲染器实时输出纹理及不可变屏幕覆盖层 |
+| `renderer/camera/camera_controller.hpp` | 可选 camera：Orbit/Follow/Free 相机 |
+| `renderer/text/text.hpp` | 可选 text：中文/回退、位图/SDF、世界文字 |
+| `renderer/ui/ui.hpp` | 可选 ui：RML/RCSS、控件、输入路由、覆盖层 |
+| `renderer/tilemap/tilemap.hpp`、`tilemap/streaming.hpp` | 可选 tilemap：瓦片、分块、后台读取与保存 |
+| `renderer/collision/collision.hpp`、`physics2d/physics2d.hpp` | 可选轻量查询/移动，以及独立 Box2D 刚体 |
+| `renderer/particles/particles.hpp` | 可选固定步图片粒子及天气/火烟预设 |
+| `renderer/environment/environment.hpp`、`presentation/presentation.hpp` | 可选昼夜天气与遮挡淡出/闪白 |
 
 对外服务类使用 PImpl，数学类型、句柄和描述结构是普通值类型。PImpl 隐藏实现依赖，但公共接口仍使用 `std::string`、容器、future 等 C++ 类型；应使用与 SDK 兼容的编译器、架构和运行库，不把它当成跨语言 C ABI。
 
-### 1.3 当前可用范围
+### 1.3 组件选择和能力边界
 
-当前实现静态场景、PBR、多种灯光、一个方向光阴影、两种透明策略、可选 FXAA、图片及静态模型导入、图形/计算 RHI 和渲染图；支持 OpenGL 及可选 Vulkan 后端。后者的构建、窗口和 SDK 用法见 [Vulkan 专章](VULKAN.md)。
+核心提供场景、资源、静态模型、快照、Sprite、材质/光照、OIT/FXAA、异步资源、纹理工具、RHI 与 RenderGraph。OpenGL/Vulkan 是单独后端；animation、interaction、audio、tilemap、collision、particles、environment、presentation、physics2d、camera、ui、text 为十二个可选组件。
 
-音乐与音效通过独立 `renderer::audio` 接入，不占用窗口或图形设备；默认启用，可通过 `RENDERER_BUILD_AUDIO=OFF` 裁剪。音频事件与游戏/动画事件的连接由应用负责，详见[音频说明](AUDIO.md)。
+组件存在取决于 SDK 制作时的构建开关。`find_package(renderer CONFIG REQUIRED COMPONENTS ...)` 对缺失组件立即失败；`OPTIONAL_COMPONENTS` 可用于明确的应用降级。扩展库之间没有强制链接依赖，应用负责模块更新与事件联动；core 和图形后端不会反向链接全部扩展。
 
-SDK 已提供 Sprite/Billboard、方向序列帧及精灵拾取，详见 [Sprite 专章](SPRITES.md)。当前没有模型动画/骨骼/蒙皮、逐像素精确透明、折射、通用 ECS、自定义组件运行时注册、场景文件保存、普通网格拾取、UI 框架绑定或原生窗口句柄嵌入接口。应用可以在自身业务层组织对象、输入映射、保存格式和相机控制；需要新增 GPU 能力时再扩展引擎。
+现有相机控制、UI、世界文字、流式世界和二维物理都可以直接通过公共 SDK 使用。三维模型骨骼/蒙皮、通用 ECS、导航/AI、通用场景文件和业务存档格式、完整三维物理、精确逐像素透明，以及原生窗口句柄嵌入尚不属于当前能力。高层支持材质函数和 RenderTexture，但没有向内部 RenderGraph 注册任意 Pass 的稳定接口。
 
-## 2. 安装 SDK 并运行配套工程
+## 2. 从安装目录接入并运行
 
-### 2.1 构建和安装
+### 2.1 先确认 SDK 与工具链
 
-在引擎源码根目录执行：
+假定完整 SDK 在 `C:/SDK/renderer`，应用源码在另一个目录 `my_app`。使用 CMake 3.25+、兼容的 C++20 工具链；本机交付验证为 Windows x64 / Visual Studio 2022 / MSVC。SDK 自带静态传递依赖；消费者不需要下载 GLFW/FreeType/Box2D、安装 Vulkan SDK 或包含 VMA 头文件。运行时仍需要相应图形驱动；窗口模式需要桌面环境，Windows OpenGL 离屏依赖 WGL pbuffer。
 
-```powershell
-cmake --preset windows -DCMAKE_INSTALL_PREFIX=C:/SDK/renderer
-cmake --build --preset windows-release --parallel 6
-cmake --install build/windows --config Release
+```text
+C:/SDK/renderer/
+  include/renderer/                       公共 API 与启用的扩展头文件
+  lib/Release/                           Release 库及静态传递依赖
+  lib/Debug/                             安装 Debug 后才存在
+  lib/cmake/renderer/rendererConfig.cmake  find_package 入口
+  share/renderer/README.md                文档首页
+  share/renderer/docs/DEVELOPMENT_GUIDE.md 本指南
+  share/renderer/examples/                可独立构建的示例源码
+  share/renderer/assets/                  已启用文字/UI 的示例字体
+  share/renderer/third_party/licenses/    许可证
 ```
 
-SDK 的 `include` 保存公共头文件，`lib/Release` 保存库和静态传递依赖，`lib/cmake/renderer` 保存包配置，`share/renderer` 保存文档、示例及许可。安装路径覆盖、Debug/Release 共存、仅核心包和离线构建见 [SDK 说明](SDK.md)。
+SDK 只有安装过的配置与组件。应用需匹配 x64/x86、Debug/Release、编译器与运行库；Windows 默认 Debug 为 `/MDd`，Release 为 `/MD`。公共类型使用标准库容器和 future，不承诺跨编译器 ABI，也不要混用升级前后的头文件、库和对象文件。只提供 Release 的 SDK，应先用 Release 构建示例；需要 Debug 时请供应方补装对应库。
 
-### 2.2 自己的应用工程
+### 2.2 创建自己的 CMake 工程（完整文件）
 
-创建 `my_app/CMakeLists.txt` 和 `my_app/main.cpp`：
+目录只需要：
+
+```text
+my_app/
+  CMakeLists.txt
+  main.cpp
+```
+
+将下列完整内容保存为 `CMakeLists.txt`，`main.cpp` 使用第 3.4 节的完整程序：
 
 ```cmake
 cmake_minimum_required(VERSION 3.25)
 project(my_app LANGUAGES CXX)
-find_package(renderer 0.2 CONFIG REQUIRED COMPONENTS core opengl)
+set(APP_BACKEND "opengl" CACHE STRING "opengl or vulkan")
+set_property(CACHE APP_BACKEND PROPERTY STRINGS opengl vulkan)
+if(NOT APP_BACKEND STREQUAL "opengl" AND NOT APP_BACKEND STREQUAL "vulkan")
+    message(FATAL_ERROR "APP_BACKEND must be opengl or vulkan")
+endif()
+find_package(renderer 0.2 CONFIG REQUIRED COMPONENTS core ${APP_BACKEND})
 add_executable(my_app main.cpp)
-target_link_libraries(my_app PRIVATE renderer::opengl)
+target_compile_features(my_app PRIVATE cxx_std_20)
+target_compile_definitions(my_app PRIVATE APP_USE_VULKAN=$<STREQUAL:${APP_BACKEND},vulkan>)
+target_link_libraries(my_app PRIVATE renderer::${APP_BACKEND})
 if(MSVC)
     target_compile_options(my_app PRIVATE /utf-8)
 endif()
+message(STATUS "Renderer guide: ${renderer_DEVELOPMENT_GUIDE}")
 ```
 
-然后配置应用，不需要把引擎源码复制到工程内：
+从 `my_app` 目录配置 OpenGL 应用：
 
 ```powershell
-cmake -S my_app -B my_app/build -DCMAKE_PREFIX_PATH=C:/SDK/renderer
-cmake --build my_app/build --config Release
+cmake -S . -B build/opengl -G "Visual Studio 17 2022" -A x64 -DCMAKE_PREFIX_PATH=C:/SDK/renderer -DAPP_BACKEND=opengl
+cmake --build build/opengl --config Release --parallel 6
+.\build\opengl\Release\my_app.exe --frames 60 --capture output/opengl.png
 ```
 
-`renderer::opengl` 自动传递 `renderer::core`、C++20 要求、公共 include 目录及所需的静态依赖。不要手工枚举 glslang/GLFW 等库，不要链接 `renderer::_...` 内部目标。Windows 默认 Release 使用 `/MD`，Debug 使用 `/MDd`；应用和 SDK 应匹配配置。
-
-只使用 CPU 场景、资源、模型、Shader 编译或图编译时，申请 `COMPONENTS core` 并链接 `renderer::core`。打开窗口和调用任何 OpenGL 工厂需要 OpenGL 组件，即使窗口隐藏也一样。
-
-### 2.3 四个完整示例
-
-源码工程位于 [examples/development](../examples/development/CMakeLists.txt)，安装后位于 `C:/SDK/renderer/share/renderer/examples/development`。根工程开启 `RENDERER_BUILD_EXAMPLES` 时直接复用本次构建的引擎目标；单独配置示例目录时通过 `find_package` 使用已安装 SDK。
-
-无需安装 SDK，即可从源码根目录运行：
+若 SDK 已含 Vulkan，用同一份应用源码创建另一构建目录：
 
 ```powershell
-cmake --preset windows -DRENDERER_BUILD_EXAMPLES=ON
-cmake --build --preset windows-release --parallel 6
-.\build\windows\Release\development_scene.exe
-.\build\windows\Release\development_sprite.exe --threaded
+cmake -S . -B build/vulkan -G "Visual Studio 17 2022" -A x64 -DCMAKE_PREFIX_PATH=C:/SDK/renderer -DAPP_BACKEND=vulkan
+cmake --build build/vulkan --config Release --parallel 6
+.\build\vulkan\Release\my_app.exe --offscreen --frames 4 --capture output/vulkan.png
 ```
 
-示例和测试开关彼此独立，完整用法见[示例说明](../examples/README.md)、[测试说明](../tests/README.md)。安装后仍可使用独立工程：
+带空格的安装路径使用 `-DCMAKE_PREFIX_PATH="D:/SDK/Renderer SDK"`。也可将 `renderer_DIR` 指向 `<SDK>/lib/cmake/renderer`；自定义安装 lib 目录时按实际位置调整。单配置生成器需设置 `-DCMAKE_BUILD_TYPE=Release`，可执行文件通常直接在构建目录而不在 Release 子目录。
+
+只使用 CPU 场景/资源/模型/Shader/图编译时，请求 core 并链接 renderer::core。需要可选能力时显式申请与链接，例如：
+
+```cmake
+# 局部片段：在自己的应用 CMake 中增加所需组件。
+find_package(renderer 0.2 CONFIG REQUIRED COMPONENTS opengl camera text
+    OPTIONAL_COMPONENTS audio)
+target_link_libraries(my_app PRIVATE renderer::opengl renderer::camera renderer::text)
+if(TARGET renderer::audio)
+    target_link_libraries(my_app PRIVATE renderer::audio)
+    target_compile_definitions(my_app PRIVATE APP_HAS_AUDIO=1)
+endif()
+```
+
+关闭组件意味着对应 API 不可调用；需要用条件编译分隔可选代码，不能只判断 TARGET 后仍无条件编译调用。使用 REQUIRED 时 SDK 缺失组件即配置失败，这是最早的部署检查。
+
+不要手工枚举静态依赖，不要直接链接 `renderer::_...` 内部目标或把 SDK 的 lib 目录全加进链接器。CMake 目标已经传递头文件、C++20、线程与平台库。`RENDERER_BUILD_*` 是引擎制作/示例构建开关，消费者设置它们不会向一个裁剪过的 SDK 增加缺失库。
+
+### 2.3 运行安装包内的完整示例
+
+安装包的示例是可编辑的 SDK 消费源码。单独构建到应用工作目录，避免把构建产物写回 SDK：
 
 ```powershell
-cmake -S C:/SDK/renderer/share/renderer/examples/development -B build/development -DCMAKE_PREFIX_PATH=C:/SDK/renderer
-cmake --build build/development --config Release --parallel 6
-ctest --test-dir build/development -C Release --output-on-failure
+cmake -S C:/SDK/renderer/share/renderer/examples -B build/sdk-examples -DCMAKE_PREFIX_PATH=C:/SDK/renderer -DRENDERER_GL_TESTS=ON -DRENDERER_VULKAN_TESTS=ON
+cmake --build build/sdk-examples --config Release --parallel 6
+ctest --test-dir build/sdk-examples -C Release --output-on-failure
 ```
 
-四个测试都需要 OpenGL 驱动和桌面环境；隐藏窗口不等同于无图形上下文。需要完全不使用显示环境的检查时，使用 [SDK 核心包示例](SDK.md)。
+只开启本机支持且 SDK 已提供的后端检查。聚合示例的 GPU 检查默认关闭；`RENDERER_BUILD_EXAMPLES=OFF` 关闭示例，`RENDERER_BUILD_TESTS=OFF` 不注册运行检查。安装包不携带引擎私有单元测试源码，现有 SDK 聚合示例完整配置为 40 项运行检查；以本次 `ctest -N` 为准。
 
-森林示例需安装 animation 和 interaction 扩展；独立示例工程会按可用组件决定是否提供它。扩展的目录、开关、显式链接及 CPU SDK 验证见[模块说明](MODULES.md)。
-
-| 程序 | 完整源码 | 内容与预期结果 |
-| --- | --- | --- |
-| `development_scene` | [scene_app.cpp](../examples/development/scene_app.cpp) | 棋盘纹理立方体、地面、透明外壳、方向光、轨道相机、独立渲染线程 |
-| `development_compute` | [compute_app.cpp](../examples/development/compute_app.cpp) | GPU 生成 16 个整数，回读并核对 `7 10 13 ... 52` |
-| `development_graph` | [graph_app.cpp](../examples/development/graph_app.cpp) | 自定义三角形 Pipeline、临时纹理、拷贝、呈现、剔除无用 Pass 和时间戳 |
-| `development_sprite` | [sprite_app.cpp](../examples/development/sprite_app.cpp) | 图片森林、方向行走、帽子部件、落地点排序、Alpha 拾取、地面阴影和简单障碍 |
-
-交互场景启动方式：
-
-```powershell
-.\build\development\Release\development_scene.exe
-.\build\development\Release\development_scene.exe --hidden --frames 4 --capture build/first.ppm
-.\build\development\Release\development_scene.exe --model C:/assets/scene.glb
-```
-
-| 操作 | 效果 |
+| 子目录 | 用途和所需组件 |
 | --- | --- |
-| 鼠标右键拖动 | 围绕目标点旋转相机 |
-| 滚轮 | 调整轨道距离 |
-| W/S、A/D | 沿当前水平视向前后、左右平移目标点 |
-| Q/E | 向下、向上移动目标点 |
-| Space | 暂停/恢复立方体旋转，仅首次 Press 切换 |
-| O | 切换排序 Alpha 与加权 OIT |
-| F | 切换 FXAA 抗锯齿，默认关闭，也可用 --fxaa 启动 |
-| Esc | 通过窗口默认逻辑请求关闭 |
+| [development](../examples/development/CMakeLists.txt) | OpenGL 场景/输入、Compute、自定义图及 Sprite 四个教学程序；Sprite 另需 animation/interaction |
+| [offscreen](../examples/offscreen/README.md) | 一个后端即可，森林 PNG；Vulkan 路径无窗口 |
+| [camera](../examples/camera/README.md)、[physics2d](../examples/physics2d/README.md) | 只需对应模块的 CPU 示例 |
+| [audio](../examples/audio/main.cpp) | 对应模块；`--offline` 不打开声卡 |
+| [text](../examples/text/README.md)、[ui](../examples/ui/README.md) | 对应模块与后端，包含字体、窗口/离屏和输入接入 |
+| [texture_text](../examples/texture_text/README.md) | core 的 DDS 打包器；可视对照另需 text 与后端 |
+| [features](../examples/features/README.md) | ui/text 与后端；异步资源、调试面板、材质效果及小地图 |
+| [world](../examples/world/README.md) | 图片地图、流式/碰撞、粒子、环境、表现与一个后端 |
+| [game](../examples/game/README.md) | 十二模块与一个后端，完整应用调度、HUD、音画和存档联动 |
+| [performance](../examples/performance/README.md) | text/interaction 与后端，六负载性能 CSV 与参考开关 |
 
-隐藏运行必须提供正的 `--frames`。`--capture` 输出 PPM 并创建父目录；`--model` 导入模型并把实例平移到 X=2，模型自身尺寸和朝向保持其导入结果，应用可按第 6 节继续调整。
+这些目录也可各自作为 CMake 的 `-S` 输入，参照各目录 README。只有 Vulkan 的 SDK 不提供依赖 OpenGL 的 development 四程序，应从 offscreen/features/game 等双后端示例入手。完整示例清单见[示例导航](../examples/README.md)。
+
+### 2.4 仅供 SDK 制作者：从源码安装
+
+已经拿到 SDK 的读者可跳过本节。制作双后端 SDK 时，供应方需在源码根目录准备 Vulkan 开发头文件及构建依赖：
+
+```powershell
+cmake --preset windows -DRENDERER_BUILD_OPENGL=ON -DRENDERER_BUILD_VULKAN=ON -DRENDERER_INSTALL_SDK=ON -DCMAKE_INSTALL_PREFIX=C:/SDK/renderer
+cmake --build build/windows --config Release --parallel 6
+cmake --install build/windows --config Release
+cmake --build build/windows --config Debug --parallel 6
+cmake --install build/windows --config Debug
+```
+
+安装完整目录后，可通过 `share/renderer/README.md` 导航到本指南。VS INSTALL 的前缀来自配置缓存，`cmake --install --prefix` 仅覆盖当次安装；构建开关、离线依赖、GNUInstallDirs、自定义 lib/share 目录及升级规则见 [SDK 专章](SDK.md)。
 
 ## 3. 创建第一帧与应用主循环
 
@@ -199,7 +243,7 @@ engine.waitIdle();
 
 上例的等待需要 `<thread>`、`<chrono>`。在 `pollEvents()` 后检查关闭标记，允许关闭订阅者先调用 `cancelClose()`。最小化时尺寸可能为零，应用可以跳过绘制并适当等待，避免空转。
 
-`extract()` 解析当前场景和资源；它不会执行 GPU 命令。`render()` 完成 CPU 帧准备和 GPU 命令提交；它不等于 GPU 执行结束。`present()` 才交换窗口缓冲。不要漏掉任意一步。
+`extract()` 解析当前场景和资源；它不会执行 GPU 命令。`render()` 完成 CPU 帧准备和 GPU 命令提交；它不等于 GPU 执行结束。`present()` 才交换窗口缓冲。窗口路径不要漏掉相应步骤；离屏不调用 present，renderToImage 会在内部连续执行绘制和回读。
 
 ### 3.3 数学与坐标约定
 
@@ -216,6 +260,142 @@ engine.waitIdle();
 | 场景长度 | 应用自行选择一致单位；引擎不做通用自动单位换算 |
 
 `Mat4::transformPoint()` 直接取矩阵乘积的 XYZ，不进行齐次除法，适合仿射变换。需要屏幕投影时，使用 `Vec4 clip = projection * view * Vec4{...}`，自行检查 w、裁剪范围并进行透视除法。
+
+### 3.4 可直接编译的窗口/离屏程序（完整 main.cpp）
+
+此程序只链接第 2.2 节选择的一个后端，不依赖扩展、外部模型或字体。创建立方体、棋盘地面和相机，支持窗口、隐藏窗口、离屏、固定帧数与 PNG；省略 `--frames` 时窗口持续运行，离屏/隐藏模式默认运行一帧。
+
+```cpp
+#include <chrono>
+#include <filesystem>
+#include <iostream>
+#include <memory>
+#include <renderer/renderer.hpp>
+#include <renderer/window.hpp>
+#include <stdexcept>
+#include <string>
+#include <thread>
+
+int main(int argc, char **argv) {
+    using namespace renderer;
+    try {
+        bool offscreen = false, hidden = false;
+        int frameLimit = 0;
+        std::filesystem::path capture;
+        for (int i = 1; i < argc; ++i) {
+            const std::string arg = argv[i];
+            auto value = [&]() {
+                if (++i >= argc)
+                    throw std::invalid_argument("Missing option value");
+                return std::string(argv[i]);
+            };
+            if (arg == "--offscreen")
+                offscreen = true;
+            else if (arg == "--hidden")
+                hidden = true;
+            else if (arg == "--frames") {
+                frameLimit = std::stoi(value());
+                if (frameLimit <= 0)
+                    throw std::invalid_argument("--frames must be positive");
+            } else if (arg == "--capture")
+                capture = value();
+            else
+                throw std::invalid_argument("Unknown option: " + arg);
+        }
+        if ((offscreen || hidden) && frameLimit == 0)
+            frameLimit = 1;
+#if APP_USE_VULKAN
+        constexpr auto api = GraphicsApi::Vulkan;
+#else
+        constexpr auto api = GraphicsApi::OpenGL;
+#endif
+        // Window 必须比 Renderer 活得更久；离屏模式不创建应用 Window。
+        std::unique_ptr<Window> window;
+        if (!offscreen)
+            window = std::make_unique<Window>(WindowConfig{.width = 960,
+                                                           .height = 640,
+                                                           .title = "SDK application",
+                                                           .visible = !hidden,
+                                                           .vsync = !hidden,
+                                                           .graphicsApi = api});
+        AssetStore assets;
+        Scene scene;
+        RenderExtractor extractor;
+        RendererConfig config;
+        config.renderThread = true;
+        config.assetUploadBudgetBytes = 0; // 单帧教学截图；实际游戏可保留默认软预算。
+        auto engine = [&]() {
+#if APP_USE_VULKAN
+            if (window)
+                return Renderer::createVulkan(*window, config);
+            return Renderer::createVulkanOffscreen({960, 640}, config);
+#else
+            if (window)
+                return Renderer::createOpenGL(*window, config);
+            return Renderer::createOpenGLOffscreen({960, 640}, config);
+#endif
+        }();
+        const auto checker = assets.createTexture(geometry::checkerboard());
+        const auto material = assets.createMaterial(
+            {.baseColor = {.85f, .35f, .12f, 1}, .metallic = .2f, .roughness = .4f});
+        const auto groundMaterial =
+            assets.createMaterial({.baseColorTexture = checker, .roughness = .9f});
+        const auto cube = scene.createNode(scene.root(), "Cube");
+        scene.setComponent(cube, MeshRenderer{assets.createMesh(geometry::cube()), {material}});
+        const auto ground = scene.createNode(scene.root(), "Ground");
+        scene.setComponent(ground,
+                           MeshRenderer{assets.createMesh(geometry::plane(8)), {groundMaterial}});
+        scene.setLocalTransform(ground, Mat4::translation({0, -.55f, 0}));
+        const auto camera = scene.createNode(scene.root(), "Camera");
+        scene.setComponent(camera, Camera{}); // aspectRatio=0 自动使用目标像素比例。
+        scene.setLocalTransform(camera, *Mat4::lookAt({3, 2, 5}, {0, 0, 0}).inverse());
+        RenderView view;
+        view.cameraNode = camera;
+        view.toneMapping = ToneMapping::ACES;
+        view.antiAliasing = AntiAliasing::FXAA;
+        int frame = 0;
+        while (frameLimit == 0 || frame < frameLimit) {
+            if (window) {
+                window->pollEvents();
+                if (window->shouldClose())
+                    break;
+                const auto [w, h] = window->framebufferSize();
+                if (w <= 0 || h <= 0) {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                    continue;
+                }
+            }
+            scene.setLocalTransform(cube, Mat4::rotationY(float(frame) / 60.f));
+            const auto snapshot = extractor.extract(scene, assets);
+            const auto stats = engine.render(snapshot, view);
+            (void)stats;
+            if (window)
+                engine.present();
+            ++frame;
+        }
+        if (frame > 0 && !capture.empty())
+            engine.readback().savePng(capture);
+        if (engine.debugErrorCount())
+            throw std::runtime_error("Graphics debug errors");
+        std::cout << engine.deviceInfo().backend << ": " << frame << " frames\n";
+        return 0;
+    } catch (const std::exception &error) {
+        std::cerr << error.what() << '\n';
+        return 1;
+    }
+}
+```
+
+本例用固定的每帧角度便于截图复现；实际交互应用按单调时钟计算 dt，使用它推进动画/控制器，物理则由固定步系统消费。关闭阴影或透明/FXAA 只需修改 RenderView；切换图形 API 需要重新创建匹配的窗口与 Renderer，不能对现有窗口原地改 API。
+
+```powershell
+# OpenGL 隐藏窗口、OpenGL 离屏，以及 Vulkan 离屏示例。
+.\build\opengl\Release\my_app.exe --hidden --frames 4 --capture output/gl-window.png
+.\build\opengl\Release\my_app.exe --offscreen --frames 4 --capture output/gl-offscreen.png
+.\build\vulkan\Release\my_app.exe --offscreen --frames 4 --capture output/vk-offscreen.png
+```
+
+PNG 使用显示编码、左上行序；不应手工再上下翻转或做一次 Gamma 编码。`readback()` 同步等待所需 GPU 工作，宜按截图请求触发。Windows OpenGL pbuffer 初始化会使用引导窗口，Vulkan 离屏完全跳过窗口/Surface/Swapchain；详细约束见[离屏文档](OFFSCREEN.md)。
 
 ## 4. 构建场景与组织节点
 
@@ -312,7 +492,7 @@ const auto surfaceMaterial = assets.createMaterial(surface);
 | occlusionTexture | `srgb=false`，R=环境遮蔽 |
 | Alpha | 线性覆盖/混合因子，不按 sRGB 转换 |
 
-手工 TextureDesc 的像素字节数必须等于 `width * height * 4`，尺寸为正且每边不超过 16384。`loadTexture()` 会把常见图片解码并转换为左下原点；模型导入遵循模型 UV 与图片的配套约定，不要再给 glTF 的纹理统一额外翻转。
+默认未压缩、单层 RGBA8 TextureDesc 的 pixels 字节数为 `width * height * 4`；Alpha8、数组、显式 mip 和 BC 使用各自载荷规则，可用 texture::validate 检查。尺寸为正且每边不超过 16384。`loadTexture()` 会把常见图片解码并转换为左下原点；模型导入遵循模型 UV 与图片的配套约定，不要再给 glTF 的纹理统一额外翻转。
 
 滤波和寻址在 `TextureDesc.sampling` 中设置。手工创建不需要 mip 的纹理时设置 `mipmapped=false`；颜色与数据纹理的 srgb 选择比过滤方式更先影响结果正确性。
 
@@ -408,7 +588,7 @@ auto focus = window.subscribe<WindowFocusEvent>([&](const auto &event) {
 
 连续移动应保存按下状态并乘以 dt，不把系统 Repeat 的频率当作运动速度。切换开关只处理 Press，避免长按反复切换；失焦后清除按键状态，避免收不到 Release 时持续移动。
 
-相机控制器属于应用层。配套 `scene_app.cpp` 提供完整轨道相机：右键拖动修改 yaw/pitch、滚轮修改距离、键盘平移目标，再用 `lookAt()` 生成姿态。当前 SDK 没有鼠标捕获或无限相对移动接口，指针离开客户区后的交互需求需要单独扩展。
+输入绑定、目标选择和玩法限制属于应用层，可复用控制器由 renderer::camera 提供。配套 `scene_app.cpp` 还保留手工轨道相机作为对照：右键拖动修改 yaw/pitch、滚轮修改距离、键盘平移目标，再用 `lookAt()` 生成姿态。当前 SDK 没有鼠标捕获或无限相对移动接口，指针离开客户区后的交互需求需要单独扩展。
 
 ### 7.3 订阅、关闭与窗口大小
 
@@ -504,7 +684,7 @@ Blend 材质不投射阴影，可接收阴影；Mask 可投射裁剪阴影。`Me
 
 截图使用 `engine.readback()` 和 `Image::savePpm(path)`。回读会同步等待并产生 CPU 内存副本，不宜每帧常开；PPM 忽略 Alpha，`savePpm()` 不创建父目录，配套应用自行创建目录。
 
-高层 render 会覆盖本帧输出。SDK 当前没有对多个 RenderView 保留输出再分屏合成的接口；连续调用 render 不会自动构成分屏。需要分屏或编辑器视口纹理时，使用自己的 RHI 目标与合成流程，或新增高层输出接口。
+高层 render 会覆盖主输出，连续调用不会自动构成分屏。需要小地图、角色预览或编辑器视口时，使用 createRenderTexture/renderToTexture 保存独立输出，再通过 UI 图片或自己的 RHI 流程合成；参见第 22 节。
 
 ### 8.4 可选 FXAA
 
@@ -609,7 +789,7 @@ UBO/SSBO 的 std140/std430 不是任意 C++ 结构体的自然布局。根据 Sh
 
 应用先读取并编译新的 Shader，再尝试创建新 Pipeline 和匹配的绑定组；全部成功后才替换当前使用的句柄。编译失败时保留旧 Pipeline 并显示诊断，避免把场景切成黑屏。替换后确认没有尚未提交的命令引用旧句柄，再销毁旧句柄；已提交的原生资源由设备延迟回收。
 
-这条路径用于应用自建的 RHI Pipeline。高层 MaterialDesc 当前不接受任意 ShaderArtifact；要改变内置 PBR Shader，需要修改高层后端及对应布局。
+这条热更新路径用于应用自建 RHI Pipeline。高层 MaterialDesc 不接受任意 ShaderArtifact，但可通过 effect.vertex/surface 定制函数体与参数；完整自定义入口/绑定布局使用 RHI 或修改高层实现，见第 22 节。
 
 ## 11. 直接使用 RHI
 
@@ -622,7 +802,7 @@ const auto caps = device.capabilities();
 const auto supported = device.formatFeatures(rhi::Format::Rgba16Float);
 ```
 
-查询能力后再选择附件格式、绑定数量和内存范围。当前资源范围主要是 2D 纹理、float 顶点属性、uint32 索引、UBO/SSBO、组合采样纹理和 Storage Image；不要假定纹理数组、MSAA、各种顶点整型布局或描述符数组已经可用。
+查询能力后再选择附件格式、绑定数量和内存范围。当前支持二维/二维数组与层视图、可选 BC 格式、float 顶点属性、uint32 索引、UBO/SSBO、组合采样纹理和 Storage Image。BC 不可作附件/Storage Image；附件单采样，MSAA、各种顶点整型布局和 Bindless 描述符数组不属于当前能力。
 
 | Memory | 用途与同步 |
 | --- | --- |
@@ -768,7 +948,7 @@ compile 在 CPU 上生成依赖、裁剪、屏障和物理复用方案，不分�
 | --- | --- |
 | sceneInstances / visibleInstances / culledInstances | 场景快照、视图可见与剔除数量，用于检查层和视锥 |
 | sceneDrawCalls、shadowDrawCalls、transparentDrawCalls | 对应阶段的几何批次数 |
-| drawCalls | 包含场景、阴影、OIT Resolve、ToneMap 和可选 FXAA，不能直接等于对象数 |
+| drawCalls | 包含场景、阴影、OIT Resolve、ToneMap、可选 FXAA 和屏幕覆盖层，不能直接等于对象数 |
 | antiAliasingDrawCalls | 开启 FXAA 时为 1，关闭为 0，不计入几何三角形数 |
 | triangles | 仅场景几何，不包含阴影和全屏三角形 |
 | uploadedBytes | 本帧资源/帧数据上传量，持续很大时检查资源是否反复创建 |
@@ -791,7 +971,13 @@ GPU 时间可能滞后，透明模式切换后短时间内可能仍看到旧模�
 
 场景变换缓存避免重复矩阵求逆与连乘，但仍需遍历检查版本。不要把“增量更新”理解为对任意规模静态树完全零开销。当前 PBR 采用每视图灯光列表，未实现分簇或延迟光照架构。
 
-### 13.3 错误处理
+### 13.3 分配器和提交复用统计
+
+高层 `engine.memoryStatistics()` 返回资源载荷、图目标、实例镜像与暂存保留估算；Vulkan 另有 nativeMemoryBlocks/Allocations、nativeMemoryBlockBytes/AllocationBytes，先检查 nativeMemoryDetailsAvailable。分配字节含对齐，块字节含空闲范围；不要和 estimatedGpuBytes 相加，也不要当作完整驱动驻留显存。
+
+低层 `device.statistics()` 查询 submissionContextsCreated/Reused、descriptorPoolsCreated/Reused、缓存与待回收提交数，以及 VMA 分配器统计。Vulkan 已完成上下文复用与 VMA 子分配；查询不隐式等 GPU，OpenGL available=false 表示此诊断不可用。具体缓存上限、预算和统计口径见[诊断](DIAGNOSTICS.md)与[优化说明](OPTIMIZATION.md)。
+
+### 13.4 错误处理
 
 CPU 参数校验、导入、Shader 编译、图编译和设备操作可能抛异常。应用边界应捕获 std::exception，将错误显示或记录；异步任务通过 future.get 重新抛出。窗口用户回调的异常在 pollEvents 完成本批后抛出，独立渲染线程不会替应用吞掉业务错误。
 
@@ -861,12 +1047,434 @@ ctest --preset windows-gpu-tests --output-on-failure
 
 数据/数学/导入变更用 CPU 用例验证；新增图形行为用真实设备和图像/数据回读验证。性能结论还需要真实场景、分辨率和多设备测量，现有实测范围见[验证记录](VALIDATION.md)。两种后端共用高层管线，修改 Shader 或 RHI 能力时同时运行对应后端及像素一致性检查。
 
-## 扩展到图片世界
+## 16. 异步资源、包卸载与纹理工具
 
-在 Sprite/动画/拾取基础之上，使用 `SpriteBatch` 承载地图和粒子；按需链接 tilemap、collision、particles、environment、presentation。完整接口、更新次序、参数、生命周期及功能边界见[图片世界模块](WORLD_MODULES.md)。可运行的 `examples/world` 同时支持两种后端、源码构建和独立 SDK 构建，详见[示例说明](../examples/world/README.md)。
+### 16.1 从后台解码到 GPU 可用是两级过程
 
-## 渲染基础能力增强
+`AssetLoader` 属于 core，包含 `<renderer/asset_loader.hpp>`。后台线程读取和解码图片/静态模型，不访问应用的 Scene/AssetStore 或 GPU；应用在其控制线程调用 publish 才把资源接收进自己的仓库。
 
-普通资源读取可使用 [AssetLoader](ASSET_LOADING.md)，GPU 上传由 RendererConfig 的独立预算限制；完整包卸载后旧快照仍有效。[内存统计与增量上传](DIAGNOSTICS.md)解释静态实例复用、实际上传量与调试面板。
+下面是只提交一个模型请求的局部片段；假定 `assetRoot` 是已有素材目录，`ownedRoots` 为应用保存的 `std::vector<NodeHandle>`，`packages` 为 `std::vector<uint64_t>`：
 
-[材质与实时纹理](RENDERING_EXTENSIONS.md)介绍顶点/表面函数、加色/预乘混合、多相机直接输出至 UI、字形缓存管理和 Windows 中文组合输入。完整可运行的公开 SDK 接入在 [examples/features](../examples/features/README.md)。
+```cpp
+AssetLoader loader({.workers = 2, .maxRequests = 128,
+                    .maxReadyBytes = 128ull * 1024 * 1024});
+const auto request = loader.loadModel(assetRoot / "house.glb");
+(void)request;
+// 以下部分放入每帧应用更新，不用循环等待解码完成。
+for (auto &result : loader.publish(assets, {.maxRequests = 4,
+                                          .maxBytes = 16ull * 1024 * 1024})) {
+    if (result.info.state == AssetLoadState::Published) {
+        auto instance = result.model.instantiate(scene, scene.root(), "House");
+        ownedRoots.push_back(instance.root);
+        packages.push_back(result.package);
+    } else if (result.info.state == AssetLoadState::Failed) {
+        std::cerr << result.info.error << '\n';
+    }
+    loader.forget(result.info.id);
+}
+```
+
+该片段中的 loader 和请求必须在初始化阶段创建，不能每帧重新创建。图片可用 `loadTexture`，发布结果读取 texture 而非 model。Ready 仅表示 CPU 解码完成；Published 表示目标仓库可使用句柄；首次实际绘制仍受 Renderer 的上传预算控制。
+
+`RendererConfig::assetUploadBudgetBytes` 默认为 16 MiB，0 表示不限。预算是新资源载荷的软字节预算，单个超大资源允许独占一次以保证前进；不是硬实时帧预算。上传未完整的绘制暂缓，`pendingResourceDraws` 反映当前视图等待批次。需要加载画面时先显示占位资源，观察实际场景是否已完成资源准备。
+
+应及时消费 Failed/Cancelled/Published 事件并 forget，否则终态记录仍占 maxRequests。取消不强制打断已开始的解码，析构等待后台任务结束。优先级只影响尚未开始的 CPU 请求，不控制 GPU 绘制顺序。
+
+### 16.2 正确卸载资源包
+
+先停止引用包内句柄的业务对象和新提交，再删除相关 Scene 子树并 `assets.releasePackage(package)`。旧快照和未完成工作可继续保留资源；之后不能再用失效包句柄创建新场景快照。场景切换可调用 `extractor.clearCache()` 释放提取器持有的旧根；未完成 future 和应用缓存也需按生命周期释放。
+
+Model 是模板，不是包管理器；包卸载后保留一个 Model 副本不代表旧句柄又可使用。批次同样可能保留旧版本，应在切场景时更换/释放。CPU 有效句柄、存活 CPU 数据和 GPU 原生分配可能在不同时间减少，详见[资源加载](ASSET_LOADING.md)。
+
+### 16.3 DDS、BC 压缩、mip 与数组
+
+包含 `<renderer/texture.hpp>`，无需扩展模块。建议在打包阶段压缩并生成 mip，运行时直接读取 DDS：
+
+```cpp
+const auto original = assets.loadTexture(assetRoot / "tree.png", true);
+auto compressed = texture::compress(assets.textureDescription(original),
+                                    TextureCompression::BC3, true);
+texture::saveDds(compressed, assetRoot / "tree.dds");
+const auto treeTexture = assets.loadTexture(assetRoot / "tree.dds");
+```
+
+BC1 适合本地编码器要求的不透明图片，BC3 支持平滑 Alpha，BC4/BC5 用于线性单/双通道；BC2/BC7 支持读取/解码/上传但没有内置编码器。DDS 自带颜色空间和 mip 元数据，不能用 loadTexture 的 srgb 参数随意覆盖。高层可按设备能力降级 RGBA8，低层 RHI 则要求使用支持的格式。
+
+数组的各层必须同尺寸、颜色空间和 mip 结构；可以先 `texture::makeArray` 再压缩。同一 Sprite/材质的实例通过 `textureLayer` 选层，有助于合批，但排序、管线和材质差异仍会拆批。BC 是有损格式，精细 UI/小字可继续使用未压缩资源；具体容量、格式和坐标约定见[纹理专章](TEXTURES.md)。
+
+`AssetStore::updateTexture` 发布新句柄而非原地修改旧 CPU 纹理，旧快照继续保留旧版本。当前区域更新限单层单 mip 的未压缩 CPU 图片；实时 RenderTexture 属于第 22 节的另一种明确可更新资源。
+
+## 17. Sprite、动画、批次与交互
+
+### 17.1 创建一张朝向相机的图片
+
+仅 core 即可创建 Sprite；假定图片已有实际尺寸，以下取图集中的 64×96 区域，纹理句柄属于 assets：
+
+```cpp
+#include <renderer/sprite.hpp>
+SpriteDesc description;
+description.texture = treeTexture;
+description.rect = {0, 0, 64, 96};
+description.pixelsPerUnit = 64;
+description.pivot = {.5f, 0};
+const auto sprite = assets.createSprite(description);
+const auto actor = scene.createNode(scene.root(), "Actor");
+SpriteRenderer component;
+component.sprite = sprite;
+component.billboard = BillboardMode::Upright;
+scene.setComponent(actor, component);
+```
+
+此图片宽 1、高 1.5 世界单位，脚底为锚点。rect 与 trimOffset 使用左下像素原点；外部图集若使用左上坐标应转换一次。Fixed 采用节点图片平面，Upright 保持 Y 向上朝向相机，ViewPlane 平行相机平面。图片几何在当前视图中展开，不需要因相机旋转逐个改业务节点矩阵。
+
+默认 Blend/unlit 适合保留美术颜色和透明边缘。角色部件挂在包含 SortingGroup 的根下，以 sortingOrder 控制帽子/身体等关系；跳跃时让排序根留在地面，只抬高图片子节点。一般软透明深度测试开启、深度写入关闭；Opaque/Mask 写深度，不会因 sortingLayer 改大而忽略深度测试。
+
+SortedAlpha 保留排序约束；OIT 是近似合成。默认 Sorted 精灵在 OIT 合成后走有序队列，烟雾等可选 FollowView；需要烟雾与人物严格逐层交错时，统一使用排序透明或调整素材拆层。参数见 [Sprite 专章](SPRITES.md)。
+
+### 17.2 序列帧与方向
+
+包含 `<renderer/animation/sprite_animation.hpp>`，链接 renderer::animation。下面假定 standing/walking 是同一仓库中有效的两个 Sprite：
+
+```cpp
+SpriteAnimationClipDesc animation;
+animation.directions = {{{standing, .15, {}}, {walking, .15, "footstep"}}};
+SpriteAnimationClip clip(animation);
+SpriteAnimator animator;
+animator.play(clip, true); // 状态进入时调用一次。
+// 每帧推进，direction 为角色世界朝向。
+animator.advance(dt);
+animator.selectDirection(direction, scene.worldTransform(camera));
+animator.apply(scene, actor);
+for (const auto &event : animator.takeEvents()) {
+    if (event.name == "footstep") {
+        // 将此事件交给应用音频层，不在渲染器里耦合音频。
+    }
+}
+```
+
+支持 1/4/8 方向，各方向的帧数/时长/事件结构需一致。每帧重播 play 会不断重置动画；切方向只选方向，不重置播放时间。Clip 不代替资产仓库保活后续创建快照所需的句柄；资源包卸载前应停止相关 Animator。
+
+### 17.3 大量装饰使用 SpriteBatch
+
+包含 `<renderer/sprite_batch.hpp>`；假定 sprite 已创建：
+
+```cpp
+std::vector<BatchSprite> flowers;
+for (int i = 0; i < 1000; ++i) {
+    SpriteRenderer item;
+    item.sprite = sprite;
+    item.billboard = BillboardMode::Upright;
+    flowers.push_back({item, Mat4::translation({float(i % 50), 0, float(i / 50)}),
+                       uint64_t(i + 1)});
+}
+SpriteBatch decoration;
+decoration.replace(assets, flowers); // 静态数据初始化/变化时发布，不必每帧 replace。
+auto snapshot = extractor.extract(scene, assets, std::span(&decoration, 1));
+```
+
+批次包含世界变换，不自动继承某个 Scene 父节点、可见性或排序组。旧快照保留旧批次，替换不改写已提交内容；一个批次也不保证只有一次 Draw。为大世界按区块发布，利于界限裁剪和卸载。地图、粒子、文字返回的批次可以合并到 `std::vector<SpriteBatch>` 后一起提取。
+
+### 17.4 屏幕射线与 Alpha 拾取
+
+链接 renderer::interaction 并包含 `<renderer/interaction/picking.hpp>`。SceneQuery 使用**当前显示的**快照、相机及 framebuffer 尺寸；鼠标客户区坐标需换算成实际像素。调用 groundPoint 得到地面目标，pickSprite 获得 Alpha 检查后的精灵或批次实例 ID。
+
+快照里的节点此刻可能已被业务删除，修改 Scene 前检查 `scene.valid(hit.node)`。批次命中 node 为空，由 instanceId 回到业务对象。当前普通网格不参与该精灵拾取遮挡；空间索引只粗筛候选，最终仍需平面/UV/Alpha 检查。完整坐标换算代码见 [Sprite 交互](SPRITES.md)。
+
+## 18. 相机控制与世界文字
+
+### 18.1 Follow 控制器接入
+
+链接 renderer::camera，包含 `<renderer/camera/camera_controller.hpp>`；camera 是已有 Camera 组件的非根节点，playerWorldPosition 与 dt 由应用提供：
+
+```cpp
+CameraControllerConfig config;
+config.mode = CameraControlMode::Follow;
+config.projection = Camera::Projection::Orthographic;
+config.followOffset = {0, 10, 15};
+config.orthographicHeight = 14;
+CameraController controller(config);
+// 初始化后，每帧在物理/角色位置更新之后调用：
+controller.setTarget(playerWorldPosition);
+controller.update(dt, {.rotation = {yawDelta, pitchDelta}, .zoom = -wheelDelta});
+controller.apply(scene, camera);
+```
+
+控制器不订阅窗口；应用将键鼠变为设备无关输入。rotation 是已含灵敏度/时间的弧度增量，不能再乘一次 dt；Free movement 才按速度和 dt 积分。传送时使用 `setTarget(position, true)` 重置跟随状态。近远面、宽高比、cullingMask 保留；相机碰撞、导航、镜头震动等策略由应用添加。详见[相机控制](CAMERA.md)。
+
+### 18.2 创建名字牌，正确处理中文字体
+
+链接 renderer::text，包含 `<renderer/text/text.hpp>`。fontPath 必须指向覆盖所需字符的字体；SDK 的 LatoLatin 只是拉丁示例字体，不包含完整中文，也不随包分发系统中文字体。C++ 源文件保存为 UTF-8，MSVC 保持 /utf-8。
+
+```cpp
+TextSystem text;
+const auto font = text.loadFont(fontPath);
+WorldTextDesc name;
+name.style.font = font;
+name.style.fontSize = 24;
+name.style.rasterMode = TextRasterMode::Sdf;
+name.text = "玩家";
+name.node = actor;
+name.transform = Mat4::translation({0, 2.2f, 0});
+name.billboard = BillboardMode::ViewPlane;
+name.sizeMode = TextSizeMode::ScreenPixels;
+name.depthTest = true;
+const auto label = text.create(name);
+text.prewarm(name.style, "玩家0123456789"); // 加载阶段做常用字预热。
+// 每帧在相机写回后，按本视图的实际像素尺寸生成：
+auto letters = text.batch(scene, camera, viewportWidth, viewportHeight);
+auto snapshot = extractor.extract(scene, assets, std::span(&letters, 1));
+```
+
+label 用于 setText/setColor/setVisible/destroy；TextSystem、字体与标签在初始化创建，不能每帧重复创建。文字内部持有字形仓库，批次已经解析并保留字形资源，不把它的句柄交给应用自己的 AssetStore。
+
+ScreenPixels 只支持 ViewPlane，按 framebuffer 维持像素字号；如需要按 DPI 的 dp，应由应用换算。WorldUnits 下文字随距离缩放。depthTest=false 仍是世界文字，在场景 ToneMap/FXAA 之前；纯 HUD 应使用 UI。
+
+位图适合固定字号，SDF 适合缩放/描边；R8、规范字号复用、LRU 和局部图集更新已开启相应默认优化。首次新字符栅格化仍会消耗 CPU，应预热并合理限定缓存。字体回退显式用 setFallbackFonts；复杂塑形、双向排版和完整彩色 Emoji 不在当前范围。多相机的 Billboard/屏幕字号文字要分别生成批次。详见[世界文字](TEXT.md)。
+
+## 19. 游戏 UI、输入与中文组合编辑
+
+### 19.1 文档和控件
+
+链接 renderer::ui，包含 `<renderer/ui/ui.hpp>`。UI 是独立 RML/RCSS 文档树，输出 OverlaySnapshot，不为每个按钮创建 Scene 节点。以下片段假定已提供 LatoLatin 字体路径 fontPath；按钮示例使用英文以匹配该字体：
+
+```cpp
+UiContext ui({960, 640});
+ui.loadFont(fontPath);
+const auto hud = ui.loadDocumentFromMemory(R"(
+<rml><head><style>
+body { font-family: LatoLatin; font-size: 20px; pointer-events: none; }
+button { pointer-events: auto; margin: 20px; }
+</style></head><body><button id="pause">Pause</button></body></rml>
+)", "hud.rml");
+bool paused = false;
+auto click = ui.subscribe(hud, "pause", "click", [&](const UiEvent &) {
+    paused = !paused;
+});
+ui.update(0); // 首次输入前先完成布局。
+// 每帧构建覆盖层后再提交：
+ui.update(dt);
+view.overlay = ui.snapshot();
+```
+
+保留 click 令牌，离开作用域就取消订阅。setText 用于游戏/用户字符串，会转义标记；setMarkup 用于应用可信 RML。表单程序改值可能触发 change，事件回调应设置明确状态，避免状态来回反转。字体、图片、RCSS 和外部 RML 相对路径按文档资源基准解析，发布时应保留相应文件结构。
+
+### 19.2 输入路由与 DPI
+
+UI 不自动订阅 Window，应用集中路由事件：
+
+```cpp
+// 复用已有 window（对象引用，而不是第 3.4 节的 unique_ptr 变量）。
+auto input = window.subscribe([&](const WindowEvent &event) {
+    const bool captured = ui.processEvent(event);
+    if (!captured) {
+        // 更新相机/角色的输入状态。
+    }
+    // 无论是否捕获，都清理已按下游戏键的 Release 和失焦状态，避免“粘键”。
+});
+```
+
+鼠标客户区坐标与 framebuffer 像素不同；在正尺寸时调用 `ui.setViewport({uint32_t(pixelWidth), uint32_t(pixelHeight), double(clientWidth), double(clientHeight), float(density)})`，RCSS dp 通过 density 缩放。背景 HUD 使用 pointer-events:none，交互面板再启用，避免空白区域截获游戏鼠标。
+
+Windows 原生组合输入需每帧 `window.setTextInputArea(ui.textInputArea())`；注入平台剪贴板服务时闭包中的 Window 必须活着。中文输入事件只是文本数据，还要实际加载包含中文字形的字体。其他平台尚无相同的原生预编辑桥接。完整示例与 IME/剪贴板代码见 [UI 文档](UI.md)和[输入增强](RENDERING_EXTENSIONS.md)。
+
+## 20. 地图、物理、粒子与环境表现
+
+### 20.1 先选择需要的模块
+
+| 组件 | 负责的事情 | 应用还需负责 |
+| --- | --- | --- |
+| tilemap / TileMap | XZ 瓦片、负坐标、脏块批次缓存 | 图块素材与地图数据 |
+| tilemap / TileStreamer | 后台块读取/保存、距离优先、预算发布、滞回卸载 | 数据源、逻辑类型解析、物件/碰撞生命周期 |
+| collision / CollisionWorld | 圆/AABB、连续圆形移动与滑动 | 非刚体的移动规则、障碍添加/删除 |
+| physics2d / Physics2D | Box2D 刚体、形状、固定步、接触/传感器、查询及同步 | 业务身份、角色控制、事件处理 |
+| particles / ParticleSystem | 固定步图片粒子与曲线、火烟雨雪预设 | 发射位置/启停、资源和容量 |
+| environment / EnvironmentController | 昼夜太阳、环境光/调色、天气强度过渡 | 天气玩法、声效、粒子参数映射 |
+| presentation / SpritePresentation | 遮挡精灵淡出、闪白和恢复 | 跟随目标、效果触发、最终快照再提取 |
+
+这些模块只依赖 core；按需链接，不要求把所有组件加到一个应用。完整基础接口见[图片世界](WORLD_MODULES.md)。
+
+### 20.2 瓦片与流式驻留
+
+普通 TileMap 的局部用法，假定 grassSprite/roadSprite 有效：
+
+```cpp
+TileMap map({.tileSize = 1, .chunkSize = 16, .origin = {-16, 0, -16}});
+map.set(0, 0, grassSprite);
+map.set(-1, 0, roadSprite);
+auto terrain = map.batches(assets);
+auto snapshot = extractor.extract(scene, assets, terrain);
+```
+
+只在格子变化时 set，batches 复用未改块；大地图改用 TileStreamer。后台 load/save 返回纯数据，resolve 在应用线程把稳定类型编号映射为 Sprite。块文件与业务 payload 保存稳定 ID，不序列化运行期句柄。取消的旧任务可能继续完成，但过期结果不会发布到新世界。
+
+加载/卸载事件决定何时创建/移除场景物件、碰撞体和环境声；地图批次自动卸载不替应用删除这些业务对象。脏块保存失败会保留并施加背压，需要修复后重试，不能把失败当成功卸载。滞回、容量、发布/保存预算及 Unicode 文件格式见[流式加载](STREAMING.md)。
+
+### 20.3 俯视角色的刚体控制
+
+包含 `<renderer/physics2d/physics2d.hpp>`，链接 renderer::physics2d：
+
+```cpp
+Physics2D physics({.workerCount = 2});
+Body2DDesc player;
+player.type = Body2DType::Dynamic;
+player.lockRotation = true;
+player.shapes[0].radius = .25f;
+player.shapes[0].friction = 0;
+const auto body = physics.createBody(player);
+// 每帧应用输入后推进；默认固定步 1/60 秒、零重力。
+physics.setVelocity(body, {2, 0});
+const auto step = physics.advance(dt);
+const auto position = physics.state(body).position;
+scene.setLocalTransform(playerRoot, Mat4::translation({position.x, 0, position.y}));
+```
+
+这里 playerRoot 是 Scene 根的直接子节点，物理平面的 Y 映射到世界 Z；有父变换/插值/旋转同步时使用模块提供的绑定与 synchronize 接口。若已在外部推进固定步，使用 step，不再重复 advance；持续力需要逐固定步施加。内部物理任务在 advance/step 返回时已完成，之后消费事件和修改场景。
+
+角色一般用锁定旋转的 Dynamic 形状；Kinematic 不等同于“可与所有静态障碍碰撞的角色”。接触和 Sensor 事件中的 userData 映射业务身份，流式卸载时解除绑定/销毁刚体。物理没有自动导航/寻路，也不是三维刚体世界。详见[物理专章](PHYSICS2D.md)。
+
+### 20.4 粒子、环境和淡出
+
+粒子先 advance，再调用 batch(assets) 发布，返回值与 terrain/text 等批次一起输入 extractor。环境先 advance，再 apply 到太阳节点和 RenderView；天气强度变化由应用同步到粒子与音频。受击时调用 SpritePresentation::flash；遮挡淡出需要当前几何快照做查询，修改 Scene 后再提取最终快照。
+
+每个模块都有容量、时间步和参数约束。暂停时可暂停模拟推进并继续 UI/渲染，音频是否暂停由业务决定；不要把“停止渲染”当作“所有系统已经暂停”。
+
+## 21. 音乐、音效和应用事件
+
+链接 renderer::audio，包含 `<renderer/audio/audio.hpp>`。音频独立于 Renderer/Window，可以只做音频或无声卡离线混音：
+
+```cpp
+AudioEngine audio;
+const auto click = AudioClip::fromFile(assetRoot / "click.wav");
+const auto music = AudioClip::fromFile(assetRoot / "music.flac", AudioLoadMode::Stream);
+AudioPlayDesc background;
+background.bus = AudioBus::Music;
+background.loop = true;
+background.fadeInSeconds = 1;
+auto musicVoice = audio.play(music, background);
+audio.setBusVolume(AudioBus::Master, .8f);
+// 一次操作触发一次播放；在游戏事件处理里调用。
+auto clickVoice = audio.play(click);
+(void)clickVoice;
+// 应用控制线程定期回收/取得结束事件。
+audio.update();
+```
+
+AudioClip 是共享资源，VoiceHandle 是一次播放。短音效通常预加载并缓存资源，长音乐可流式；不要每帧从文件重新创建 Clip 或重复 play。流式音乐播放期间源文件必须保留可读。格式为 WAV/MP3/FLAC，当前没有额外的 Ogg/Opus 解码器。
+
+步行事件触发脚步声，碰撞命中触发碰撞声，UI click 触发按钮声；位置、监听器和昼夜交叉淡变由应用调度。音频设备按独立时钟混音，不能拿渲染帧数决定实际播放进度，也不能在实时回调中做资源 IO、Scene 修改或 GPU 操作。加载可在后台准备，AudioEngine 控制集中在创建线程。
+
+无声卡验证使用[音频示例](../examples/audio/main.cpp)的 --offline；空间音频、总线、淡入淡出、优先级和参数限制见[音频说明](AUDIO.md)。
+
+## 22. 自定义材质、小地图和角色预览
+
+### 22.1 材质函数与混合
+
+高层支持 MaterialDesc::effect.vertex / surface 的 GLSL 函数体，用于风摆、颜色变化等；效果参数和时间通过共用接口提供。vertex 位移必须设置足够的 boundsPadding，否则物体可能在变形后被错误裁剪。不要在效果体中另写 main 或假设任意自定义描述符已绑定。
+
+Alpha、PremultipliedAlpha、Additive 表达不同混合语义；素材的 Alpha 约定应与材质一致。时间驱动的树木摆动可只更新 view.timeSeconds，无需逐棵改模型矩阵。完整参数与 Shader 变量见[渲染扩展](RENDERING_EXTENSIONS.md)。
+
+### 22.2 GPU RenderTexture
+
+假定 mapCamera 已存在，mainView 是主视图，且已链接 ui 并创建 ui：
+
+```cpp
+const auto mapOutput = engine.createRenderTexture({300, 200});
+RenderView mapView = mainView;
+mapView.cameraNode = mapCamera;
+mapView.overlay = {};
+ui.registerImage("map", mapOutput); // 初始化时注册；RML 使用 ui:map。
+// 每帧先画小地图，再构建主 UI 与主画面：
+engine.renderToTexture(snapshot, mapView, mapOutput);
+mainView.overlay = ui.snapshot();
+engine.render(snapshot, mainView);
+engine.present(); // 窗口模式；离屏不调用。
+```
+
+RenderTexture 内容直接留在 GPU，不需回读再上传。只能在创建它的 Renderer 内使用，不能同时作为当前视图的输入和输出；反馈效果采用两个输出轮换。尺寸不可变，调整分辨率时创建新目标并替换引用。额外相机增加附件、帧准备和绘制成本；小地图可用 cullingMask 只画地面和标记。
+
+每个相机的 Billboard/像素字号文字按该视图重建批次。Renderer::readback 读取主输出；需要目标内容展示时优先 GPU 采样，单独相机截图可通过对应视图的 renderToImage 获取。
+
+## 23. 将模块组成应用，管理关闭与保存
+
+### 23.1 推荐的应用分层
+
+```text
+my_game/
+  CMakeLists.txt
+  src/
+    main.cpp                  参数、路径和生命周期
+    application.cpp           主循环与跨模块调度
+    input.cpp                 UI 优先路由、输入状态
+    world.cpp                 流式块/物件/业务身份
+    audio_system.cpp          音频缓存、声音事件映射
+  assets/
+    textures/ models/ fonts/ ui/ audio/
+  tests/                      应用自己的逻辑和图像测试
+```
+
+应用持有模块服务，业务对象保存 NodeHandle、Body/Voice/Label 身份及稳定业务 ID，不继承引擎内部后端。模块之间通过应用事件连接，避免让渲染核心直接控制玩法或音频。
+
+### 23.2 一帧调度顺序
+
+1. pollEvents，UI 先处理输入，应用清理 Release/失焦并生成角色/相机输入。
+2. 按时间步推进业务与物理，处理接触/传感器；同步角色位置到 Scene。
+3. 推进方向动画、处理脚步/受击事件；更新相机目标并 apply，之后再生成相机相关内容。
+4. 推进环境/粒子，调用资源 publish 和流式 update；按区块事件维护物件、碰撞和环境声。
+5. 更新音频控制、监听器和结束事件，整理本帧地图/粒子/文字 SpriteBatch。
+6. 需要遮挡淡出时提取几何快照、更新 presentation，再提取包含效果的最终快照。
+7. 先提交小地图等 RenderTexture，更新 UI/输入候选区域，设置 RenderView.overlay，提交主视图。
+8. 窗口模式 present；按请求截图、记录统计；保存当前显示快照用于下一次屏幕拾取。
+
+这是一条应用层参考顺序，按依赖调整；Renderer 不自动推进这些模块。完整 SDK 集成代码位于[森林营地应用](../examples/game/README.md)，它包含物理、方向动画、流式编辑/采集保存、昼夜天气、HUD、中文、PNG/WAV 和音画联动。
+
+### 23.3 关闭和保存
+
+关闭时先停止接收新业务任务/提交并取消事件订阅，再完成需要的存档和后台任务收尾，取得未消费 future 的结果/异常。Renderer 析构会排空自己的队列并清理 GPU；Window 应在其后析构。控制回调引用的 UI/游戏对象不能先于订阅令牌失效。
+
+流式保存需检查成功/失败事件和错误信息，不以“已经发起 requestSave”代替“已经保存完成”。音频停止/设备销毁、资源解码线程等待各有独立生命周期；保留共享快照或资源缓存会延迟资源释放。内存变化应结合未完成工作、包身份、缓存和 VMA 块统计理解。
+
+存档保存业务 ID、变换、资源逻辑路径/类型、动画状态和地图 payload；重新加载后重新创建 SDK 句柄。不保存 owner/index/generation、原生 GPU 指针或 PImpl 内存。
+
+## 24. 运行素材、发布、升级与交付验收
+
+### 24.1 路径和素材部署
+
+第一帧程序只用程序几何，不需要素材目录。实际游戏需部署模型及其外部纹理/bin、图集/DDS、字体、RML/RCSS/图片和音频。相对路径默认取进程工作目录，不是自动取 exe 或 SDK 根目录；VS 启动目录、命令行启动和安装目录可能不同，应在应用启动时统一确定 assetRoot。
+
+下面是应用已有 assets 目录时的局部 CMake 部署片段：
+
+```cmake
+add_custom_command(TARGET my_app POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${CMAKE_CURRENT_SOURCE_DIR}/assets" "$<TARGET_FILE_DIR:my_app>/assets")
+```
+
+不要把开发机绝对素材路径硬编码进发布包。Windows Unicode 路径优先使用 filesystem::path（必要时从宽字符串构造），与 UTF-8 文本编码分开处理。字体须有分发许可；SDK 的 LatoLatin 可作为英文示例，中文字体由应用选择并附带许可。FreeType/RmlUi 的存在不代表 SDK 自带完整中文字体。
+
+`renderer_TEXT_FONT` / `renderer_UI_FONT` 是安装 SDK 内的示例字体路径，适合构建/测试。发布应用时应将需要的字体复制到自己的素材目录，并通过自己的 assetRoot 加载；不能依赖用户机器继续保留开发用 SDK。
+
+### 24.2 运行时依赖和可迁移性
+
+CMake 负责静态链接依赖，应用发布通常不需带 glslang/GLFW/VMA 等开发头文件或整个 SDK。需部署应用使用的素材、相关许可证以及与构建匹配的系统运行库；相应图形驱动和音频设备/系统服务由运行环境提供。不要把安装 Vulkan 开发 SDK 当作终端用户运行要求。
+
+完整 SDK 目录可以复制到其他前缀，再重新指定 CMAKE_PREFIX_PATH 配置消费者。不要只搬主 .lib，丢失传递依赖、包配置或字体/示例；自定义 include/lib/share 目录时保留安装布局。SDK 同版本的头文件和库保持配套，新增值类型字段后重编应用，PImpl 不等于任意 ABI 兼容。
+
+### 24.3 诊断和验收
+
+先用第 3.4 节程序在 Release 下运行窗口/离屏，再加入业务资源，最后增加模块。遇到问题按第 14 节定位；以下是当前新增能力的常见情况：
+
+| 现象 | 检查方向 |
+| --- | --- |
+| 所需组件未找到 | SDK 是否制作/安装该模块，配置是否找到了另一份旧 SDK |
+| 只有第一次出现物体/文字时卡顿 | 解码、Shader/管线首次创建、字形栅格化及上传预算；复用/预热 |
+| 部分物体等待数帧才出现 | pendingResourceDraws 与新资源预算，Published 不等于 GPU 完全就绪 |
+| 中文方框或空白 | 字体覆盖率、回退列表、UTF-8；UI 与世界文字分别加载字体 |
+| UI 无点击或拖出后状态异常 | 保存订阅令牌、初次布局、输入路由、DPI、Release 与失焦处理 |
+| 小地图被拒绝或读写反馈 | Renderer 身份、目标存活、当前输出被同时采样 |
+| 相机旋转后文字/点击错位 | 当前视图的批次与显示快照、客户区/像素换算 |
+| 卸载后 VMA 块字节没有归零 | 活着的快照/提交、暂存池和空闲块；看 allocation 与 block 的区别 |
+| 图形调试零错误但仍有异常 | 校验层是否实际启用；同时检查 CPU 异常、资源身份和像素输出 |
+
+上线验收至少确认：两种实际支持后端的目标机器可运行；窗口缩放/最小化/全屏及 DPI 正常；固定帧截图符合预期；模块关闭时应用有明确配置错误或降级；资源包/流式卸载和退出能释放任务；素材路径与许可完整。SDK 文档应能从文档首页独立导航，示例可在另一个应用构建目录通过 find_package 编译。
+
+性能记录固定设备、驱动、分辨率、场景、线程、阴影/OIT/FXAA、验证层和 vsync，区分 CPU、GPU、等待及首次使用；现有报告是特定负载的实测，不是引擎最大容量。Vulkan 提交复用与 VMA 分配器的 created/reused、allocation/block 字段见[诊断文档](DIAGNOSTICS.md)和[优化说明](OPTIMIZATION.md)。

@@ -4,6 +4,8 @@
 
 SDK 安装公共头文件、核心静态库、可选 OpenGL/Vulkan 后端及十二个扩展静态库及完整链接依赖，并提供 `find_package(renderer CONFIG)` 配置。使用者不需要访问引擎源码、下载依赖或安装 Vulkan SDK。运行图形功能需要相应的 OpenGL 4.5 Core 或 Vulkan 1.3 驱动；窗口呈现需要显示环境，Vulkan 离屏不需要。
 
+安装后从 `share/renderer/README.md` 打开文档首页；完整[SDK 二次开发指南](DEVELOPMENT_GUIDE.md)位于 `share/renderer/docs/DEVELOPMENT_GUIDE.md`，覆盖独立 CMake 工程、可直接编译的双后端窗口/离屏程序、模块组合、素材部署和排错。文档及相对链接随 SDK 安装，消费者不需要源码目录。`find_package` 后可通过 `renderer_DOCUMENTATION_DIR` / `renderer_DEVELOPMENT_GUIDE` 定位实际路径，它们随 SDK 前缀迁移。
+
 [离屏渲染](OFFSCREEN.md)使用同一套后端目标，无额外模块。PNG 编码随 core 静态提供，不导出 stb 头文件或额外 PNG/zlib 库；Windows OpenGL 的 WGL pbuffer 系统库由 CMake 自动传递。安装包包含 `share/renderer/examples/offscreen` 和共用图集，可独立构建并直接输出 PNG。
 
 完整 SDK 还安装 [game 综合应用](../examples/game/README.md)，需十二个扩展和至少一个后端。可单独配置 `share/renderer/examples/game`，无需访问引擎私有头文件或下载素材；应用调度、音频缓存、流式物件、实际 PNG/WAV 输出均有源码。
@@ -63,7 +65,7 @@ C:/SDK/renderer/
 
 仅安装已构建并显式指定安装的配置。配置使用独立子目录，Debug 和 Release 的同名依赖库不会互相覆盖。核心/后端头文件来自 `include/renderer`，启用的扩展头文件来自 `modules/<模块>/include/renderer`，统一安装到 SDK 的 include 目录；不安装私有或第三方开发头文件。
 
-核心库随包提供 glslang、SPIR-V 支持和 SPIRV-Cross 所需的静态库。启用任一图形后端时还安装内部平台库、共用管线库和 GLFW；OpenGL 另有 GLAD，Vulkan 的 Volk 实现对象直接合入 `renderer_vulkan`。不要只复制引擎主库，应保留整个 SDK 目录。`renderer::_...` 目标是自动传递的实现依赖，应用只使用以下公开目标：
+核心库随包提供 glslang、SPIR-V 支持和 SPIRV-Cross 所需的静态库。启用任一图形后端时还安装内部平台库、共用管线库和 GLFW；OpenGL 另有 GLAD，Vulkan 的 Volk/VMA 实现对象直接合入 `renderer_vulkan`。不要只复制引擎主库，应保留整个 SDK 目录。`renderer::_...` 目标是自动传递的实现依赖，应用只使用以下公开目标：
 
 | 目标 | 用途 |
 | --- | --- |
@@ -187,3 +189,9 @@ SDF、字形 LRU 与 trimCache 属于可选 text；共享 UI 字体缓存回收�
 ## 性能优化接口与示例
 
 批量传输、区域/Alpha8 纹理、场景缓存和空间索引属于 core/RHI；字形 R8/局部图集更新属于 text。新头文件 renderer/texture_region.hpp 随核心安装，暂存池没有增加第三方依赖。完整 SDK 仍每配置 27 个静态库；更新后重新编译消费者。performance 示例需要 text/interaction 和任一后端，可独立配置，详见[示例](../examples/performance/README.md)与[优化说明](OPTIMIZATION.md)。
+
+## Vulkan 提交池与 VMA
+
+启用 Vulkan 时，固定版本 VMA 3.4.0 的实现对象静态合入 renderer_vulkan；VS 中 renderer_vma 属于 core。安装包不增加独立 VMA 静态库，也不安装 Vulkan/VMA 开发头文件；完整配置仍每配置 27 个静态库，第三方 MIT 许可随包保留。关闭 Vulkan 后不编译 VMA。
+
+`rhi::Device::statistics()` 和 RendererMemoryStats 的 nativeMemory 字段提供提交复用/分配器诊断，公共服务继续采用 PImpl。新增字段改变 C++ 值类型布局，请使用本次安装的头文件和库重新构建消费者；不能混用旧版对象文件。

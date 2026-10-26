@@ -16,6 +16,9 @@ namespace renderer::rhi::detail {
 class DeviceBackend {
   public:
     UploadStatistics uploadStats;
+    virtual DeviceStatistics statistics() const {
+        return {};
+    }
     virtual void beginUploadBatch() = 0;
     virtual CompletionToken endUploadBatch() = 0;
     virtual void uploadRegion(TextureHandle, TextureRegion, std::span<const uint8_t>, uint32_t,

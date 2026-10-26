@@ -1254,6 +1254,12 @@ void main(){result=texture(image,texcoord)*tint;}
     RendererMemoryStats memoryStatistics() const override {
         RendererMemoryStats m;
         m.pooledUploadBytes = device.uploadStatistics().pooledStagingBytes;
+        const auto native = device.statistics();
+        m.nativeMemoryDetailsAvailable = native.available;
+        m.nativeMemoryBlocks = native.memoryBlocks;
+        m.nativeMemoryAllocations = native.memoryAllocations;
+        m.nativeMemoryBlockBytes = native.memoryBlockBytes;
+        m.nativeMemoryAllocationBytes = native.memoryAllocationBytes;
         m.cachedMeshes = meshes.size();
         m.cachedTextures = textures.size();
         m.cachedMaterials = materials.size();

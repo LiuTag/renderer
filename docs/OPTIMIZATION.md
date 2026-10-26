@@ -2,13 +2,13 @@
 
 [文档导航](README.md) · [新版性能基准](../examples/performance/README.md) · [内存统计](DIAGNOSTICS.md) · [文字](TEXT.md)
 
-本轮按四个步骤实现：扩展性能矩阵、批量异步上传、CPU 缓存与空间索引、字形图集更新。两种后端使用同一套公共接口；服务类保持 PImpl，没有引入新的第三方依赖。
+优化包括性能矩阵、批量异步上传、CPU 缓存与空间索引、字形图集更新，以及 Vulkan 提交对象复用和 VMA 显存子分配。两种后端使用同一套公共接口，服务类保持 PImpl；VMA 是仅 Vulkan 使用的私有依赖。
 
 ## 上传批次与暂存池
 
 RendererConfig::batchResourceUploads 默认开启。每帧在资源预算检查后，将新网格、纹理各层/mip、材质与字形页面更新组合为传输批次，然后提交绘制。Vulkan 在同一队列记录初始化屏障、复制与 mip 生成，一次发布多项传输，CPU 不逐层等待。提交持有所有源/目标原生资源，GPU 完成后才回收；渲染线程和帧槽的同步规则不变。
 
-Vulkan 批次使用持久映射暂存块，按 256 字节对齐分配不重叠范围；只有 GPU 已完成且没有待提交引用的块才能重置游标。池容量最多 64 MiB，大于 8 MiB 的块及超过池容量的传输使用独立暂存资源。普通网格/图片仍使用原来的独立设备内存分配，本轮暂存池不等于通用显存子分配器。关闭批次时恢复逐项提交/等待和独立暂存，供性能对照。
+Vulkan 批次使用持久映射暂存块，按 256 字节对齐分配不重叠范围；只有 GPU 已完成且没有待提交引用的块才能重置游标。池容量最多 64 MiB，大于 8 MiB 的块及超过池容量的传输使用独立暂存资源。资源的底层设备内存现由 VMA 子分配；暂存范围复用与设备内存块管理是两个层次。关闭批次时恢复逐项提交/等待和独立暂存，底层仍由 VMA 管理。
 
 OpenGL 已有持久映射 Upload 缓冲，继续使用该路径。只有实际 GPU 资源传输需要批次完成标记；仅更新帧槽映射数据时复用后续绘制的完成标记。更新仍在设备线程进行，应用不能同时覆盖 GPU 使用中的映射范围。
 
@@ -53,4 +53,22 @@ R8 页面的变化减少存储/传输；新字符首次进行 FreeType SDF 栅�
 
 renderer.optimization.cpu 验证根复用、批次隔离、资源/跨场景失效、BVH/扫描与阴影结果等价、候选顺序、Alpha8/DDS 和局部更新。renderer.optimization.opengl/vulkan 验证奇数 R8 行、数组区域复制、批次无逐项等待、暂存复用、实际局部上传字节，以及新旧页面逐像素保留。完整回归仍覆盖 OIT、FXAA、材质/阴影、UI、线程和 SDK。
 
-使用[性能基准](../examples/performance/README.md)的同版本 --reference 对照，以及保存的优化前 CSV，判断本机场景收益。通用 Vulkan 显存子分配、跨进程 Shader/Pipeline 缓存、GPU 裁剪/间接绘制和 MSDF 属于后续可选项目，没有在本轮标为完成。
+使用[性能基准](../examples/performance/README.md)的同版本 --reference 对照，以及保存的优化前 CSV，判断本机场景收益。reference 开关覆盖早期上传/场景/字形优化，不关闭当前 VMA 或提交上下文复用；历史性能报告也早于这两项，不作为其 FPS 改善证明。跨进程 Shader/Pipeline 缓存、高层 GPU 裁剪/间接绘制和 MSDF 仍是后续选项。
+
+## Vulkan 提交对象复用
+
+每个提交上下文持有一个独立命令池、一个主命令缓冲、一个 Fence，以及按需增长的描述符池列表。查询到 Fence 完成后，立即释放该提交持有的资源引用，回收获取图像用的 Semaphore；空闲缓存最多保留 8 个上下文，每个最多保留 4 个描述符池，超出部分销毁。此限制不限制低层 Device 可提交的在途工作数量。
+
+复用时重置整个命令池、Fence 和保留的描述符池。每个描述符池容纳最多 256 个集合，四种描述符类型各预留 4096 个条目（保留原有单次布局的类型容量）；空间不足时选择下一个已重置的池或新建池。本次提交内相同资源组合继续缓存，跨提交重新写入描述符，不让空闲缓存保留已经卸载的资源。异常录制会销毁未提交上下文，后续提交可继续使用设备。
+
+`rhi::Device::statistics()` 查询 `submissionContextsCreated/Reused`、`descriptorPoolsCreated/Reused`、`cachedSubmissionContexts`、`cachedDescriptorPools` 和 `pendingSubmissions`。累计 created/reused 不清零；pending 包含尚未通过 collect 回收的提交，可能已经执行完成，查询本身不等待 GPU。OpenGL 返回 available=false。
+
+## Vulkan 显存子分配
+
+固定版本 VMA 3.4.0 负责普通缓冲、纹理及暂存/回读缓冲的内存选择、子分配和映射。优选大堆块大小为 32 MiB，小堆和专用分配按实际要求处理；这个值不是分配器容量限制。共享块内的对齐、缓冲/图像粒度由 VMA 维护；CPU 映射地址已经定位到子分配起点，释放一个缓冲不会手工解除整个共享块的映射。
+
+原有引用与提交完成规则不变：视图保留父图像，destroy 立即使句柄失效，实际子分配等待最后 GPU 用途结束后释放。Context 在全部原生资源释放后销毁 VMA，再销毁逻辑设备；不会在其他设备的函数表上执行释放。
+
+设备统计还提供 `memoryBlocks/Allocations` 与 `memoryBlockBytes/AllocationBytes`。块字节包含空闲范围，分配字节包含资源对齐；包括仍在提交引用中的分配、暂存和回读资源。它们不包含所有驱动对象，也不等同于驱动驻留显存。查询基于 VMA 管理的堆统计，不要求 VK_EXT_memory_budget。当前没有自动整理/搬迁已绑定资源。
+
+`renderer.vulkan.allocation` 专项验证共享块的 Buffer/Image 数据、相邻映射释放、父图像销毁后的视图、描述符池溢出复用、稳态上下文不再创建、错误录制恢复、在途资源删除及缓存上限；它不依赖 text/UI 或应用窗口。

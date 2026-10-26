@@ -1,6 +1,6 @@
 # 架构与扩展边界
 
-[返回文档导航](README.md) · [接口说明](API_GUIDE.md)
+[返回文档导航](README.md) · [接口说明](API_GUIDE.md) · [OpenGL / Vulkan 调用链导读](RENDERING_WALKTHROUGH.md)
 
 ## 分层与数据流
 
@@ -168,7 +168,7 @@ CommandEncoder 只录制 CPU 命令，各工作线程可独立录制；Device �
 
 OpenGL 对着色器存储访问使用与后续用途对应的 memory barrier 位，同时处理存储写前的 WAR 依赖。常规附件与传输依赖使用相应 OpenGL 操作的顺序保证。RHI 屏障保留完整资源、范围与阶段语义，Vulkan 将其映射到 synchronization2。
 
-每次提交插入 Fence 并返回单调完成序号。销毁使句柄立即失效，原生对象在最后引用它的提交完成后释放；清理 VAO/FBO 引用避免驱动意外保留缓冲或纹理。纹理视图引用共享底层存储，独立句柄销毁不提前释放仍使用的存储。
+每次提交关联 GPU 完成标记并返回单调序号：OpenGL 插入 GL Sync，Vulkan 关联当前提交上下文的 Fence，并在完成后复用。销毁使句柄立即失效，原生对象在最后引用它的提交完成后释放；清理 VAO/FBO 引用避免驱动意外保留缓冲或纹理。纹理视图引用共享底层存储，独立句柄销毁不提前释放仍使用的存储。
 
 每个 Renderer 帧槽都有独立的持久/coherent 映射帧、灯光和实例上传 Buffer，复用或扩容前等待本槽完成。coherent 只解决可见性，不允许 CPU 覆写 GPU 尚在读取的内容。GPU 网格/纹理/材质按不可变资源身份缓存，CPU 资源所有者消失后进入回收。
 
@@ -212,3 +212,9 @@ Vulkan 后端已经实现，复用 Scene、Model、快照、帧准备、图编�
 AssetLoader 的后台任务使用独立 CPU 仓库，主线程 adopt 保留句柄身份；资源包卸载和快照引用保留分别管理。Renderer 在预算内准备完整材质/网格，未就绪命令延后。详见[异步资源](ASSET_LOADING.md)。
 
 材质效果通过共用 GLSL 函数体进入双后端管线，时间使用帧 uniform，不需要改变静态矩阵。RenderTexture 为明确可变的 GPU 内容引用，按队列执行顺序更新；每个相机输出保存独立图缓存，禁止同时读写同一输出。详见[渲染扩展](RENDERING_EXTENSIONS.md)。
+
+## Vulkan 提交上下文与内存块
+
+Vulkan 将已经完成的命令池/缓冲、Fence 和描述符池缓存，复用前重置。上下文之间不共享需要整体重置的命令池，未完成的提交不进入空闲缓存；完成时清空资产引用，缓存本身不阻止资源包卸载。空闲缓存最多 8 个上下文，每个最多 4 个描述符池。
+
+Buffer/Image 由 Context 内的私有 VMA 分配器子分配，原生资源继续共享 Context，保证分配器晚于所有资源销毁。视图保留父存储，GPU 提交保留实际访问对象；持久映射交由分配器管理。对象复用和 VMA 不改变 RHI 屏障、纹理布局或渲染线程约定，详见[优化说明](OPTIMIZATION.md)。

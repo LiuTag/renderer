@@ -220,7 +220,7 @@ if (width > 0 && height > 0 && clientWidth > 0 && clientHeight > 0) {
 
 `pickSprite()` 尊重继承可见性、相机层掩码、Billboard、翻转、裁剪偏移、Mask 阈值和 Blend 的排序组。默认跳过有效 Alpha 小于 0.1 的 Blend 像素；Alpha=0 总是跳过。向构造函数传入 `SceneQueryFilter` 可用 excludedNodes 排除阴影、目标圈等，也可使用额外 layerMask；筛选属于交互层，不修改渲染组件。
 
-CPU 使用纹理第 0 级和 magFilter 的最近点/双线性规则检查 Alpha，不模拟实际 GPU mip/LOD/FXAA。Opaque 视为实心，Mask 通过阈值后视为实心；同一 OIT 队列没有确定层叠，拾取最近交点。当前只检查精灵，不检查普通网格的遮挡，也没有空间索引；每次拾取遍历当前缓存精灵。查询保有快照，可在只读线程使用，但返回的节点可能在可变场景中已经删除，操作前检查 valid。
+CPU 使用纹理第 0 级和 magFilter 的最近点/双线性规则检查 Alpha，不模拟实际 GPU mip/LOD/FXAA。Opaque 视为实心，Mask 通过阈值后视为实心；同一 OIT 队列没有确定层叠，拾取最近交点。当前只检查精灵，不检查普通网格的遮挡；查询可通过只读视图的 BVH 粗筛射线候选，再执行平面和 Alpha 检查，并保留原有排序/命中语义。查询保有快照，可在只读线程使用，但返回的节点可能在可变场景中已经删除，操作前检查 valid。
 
 ## 7. SDK 与图片世界模块
 

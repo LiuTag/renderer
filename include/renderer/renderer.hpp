@@ -111,6 +111,9 @@ struct RendererMemoryStats {
     uint64_t compressedTextureBytes = 0, textureArrayLayers = 0; ///< 实际 BC 载荷和数组层总数。
     uint64_t pooledUploadBytes = 0; ///< 受管理暂存池字节，可位于系统内存或设备可见内存。
     uint64_t instanceMirrorBytes = 0, cachedMeshes = 0, cachedTextures = 0, cachedMaterials = 0;
+    bool nativeMemoryDetailsAvailable = false; ///< 当前仅 Vulkan/VMA 提供下列分配器统计。
+    uint64_t nativeMemoryBlocks = 0, nativeMemoryAllocations = 0;
+    uint64_t nativeMemoryBlockBytes = 0, nativeMemoryAllocationBytes = 0;
     /** @brief 汇总受管理 GPU 资源有效载荷。@return 估算字节。 */
     uint64_t estimatedGpuBytes() const {
         return meshBytes + textureBytes + materialBytes + frameBufferBytes + renderTargetBytes +

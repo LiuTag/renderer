@@ -4,14 +4,14 @@
 
 ## 当前版本与环境
 
-记录日期：2026-10-25；当前 CMake/SDK 包版本为 0.2.0。完整配置开启 OpenGL、Vulkan、十二个扩展、示例和两个后端的 GPU 检查。
+记录日期：2026-10-26；当前 CMake/SDK 包版本为 0.2.0。完整配置开启 OpenGL、Vulkan、十二个扩展、示例和两个后端的 GPU 检查。
 
 实测环境为 Windows、Visual Studio 2022 / MSVC 19.44、NVIDIA GeForce RTX 2080 Ti、驱动 610.62、OpenGL 4.5 Core；Vulkan 开发环境为 SDK 1.4.350.0，后端要求 Vulkan 1.3，并启用可用的 Khronos 验证层与同步校验。已安装 SDK 的示例验证不依赖 VULKAN_SDK 环境变量。其他操作系统及显卡尚未实机验证。
 
 | 配置或检查 | 当前结果 |
 | --- | --- |
-| 完整 Debug | 93 项 CTest 全部通过，包含 53 个测试本体和 40 项示例运行检查 |
-| 完整 Release | 23 个示例目标构建成功，93 项 CTest 全部通过 |
+| 完整 Debug | 94 项 CTest 全部通过，包含 54 个测试本体和 40 项示例运行检查 |
+| 完整 Release | 23 个示例目标构建成功，94 项 CTest 全部通过 |
 | CPU 核心 | 关闭两个后端、十二个扩展和示例后，10 项核心检查通过；PNG 编码无需图形设备 |
 | CPU 相机（此前） | 只启用 core + camera、关闭两个后端及示例，8 项检查通过；安装后的 camera 示例无需 Vulkan SDK/窗口，独立构建运行通过 |
 | CPU UI（此前） | 只启用 core + ui，8 项检查通过；从该精简 SDK 独立构建并生成 UI 几何成功，无需窗口/Vulkan SDK |
@@ -197,3 +197,29 @@ texture_text 在两后端窗口/离屏四种组合运行，并实际检查 PNG�
 关闭后端的 core+text 12 项、仅 core 10 项检查通过；仅 core SDK 的 DDS 工具独立构建运行通过。Debug/Release SDK 每配置仍 27 个静态库；移除 VULKAN_SDK 后，聚合示例 40 项检查通过，performance 独立 SDK 的两项六负载/双线程检查通过。独立工程关闭测试或示例后，CTest 清单均为 0，恢复开关后重新生成。
 
 性能采样为两后端、两线程、六负载、每档两轮，各 48 行参考/优化数据，5000 精灵、16 帧预热、80 帧采样；分块原有粗裁剪快路径恢复后单独按同参数补采。48 对终帧 PNG 字节完全一致，已查看实际中文字形压力图。上传统计验证 Vulkan 数组流入 80 帧由 580 次提交/等待变为 10 次提交、0 次上传等待；字形像素载荷为原来的四分之一。均值/P95、CPU 字形首次栅格化瓶颈和小批次边界见[性能报告](PERFORMANCE_RESULTS.md)，复现入口见[基准](../examples/performance/README.md)。
+
+## 渲染封装与双后端导读（2026-10-26）
+
+[源码导读](RENDERING_WALKTHROUGH.md)按当前实现核对场景到原生 Draw 的调用链、CPU/设备提交完成语义、描述符分配、上传批次、统一 GENERAL 布局和独立窗口呈现流程，并在相关段落链接实际查阅的 Khronos 官方资料。
+
+验证直接从导读中提取第一个完整 C++ 和 CMake 代码块，在 `build/windows/walkthrough-check` 建立独立 SDK 消费工程，以 Release 编译，并分别运行 OpenGL/Vulkan 离屏路径；两次均通过调试错误计数检查并输出 960×640 橙色立方体 PNG，已查看两张实际图片。两个文件均为 26,302 字节，SHA256 均为 `1bc7e26ba083f25418bb1eb6babfe1703767343878312ac7d35e14f9a10939c9`。这是当前设备上的示例一致性结果，不推广为任意 Shader/硬件的逐字节一致保证。
+
+本次只增加和校准文档，不改变渲染实现；验证范围为文档示例的独立构建、双后端运行、图片与导航/安装检查，未重新执行整套 93 项回归。完整回归记录保留在前述对应阶段。
+
+## Vulkan 提交复用与 VMA（2026-10-26）
+
+Debug/Release 全量构建成功，各 94 项 CTest 全部通过，包括新增 renderer.vulkan.allocation，以及已有的双后端像素、纹理数组/压缩/图像视图、在途销毁、COW 字形、窗口/全屏/缩放、渲染线程及综合应用检查。没有修改原有参考图片或降低像素断言。
+
+专项在本机观察到新增 160 个小资源分配复用了预热时已申请的设备内存块，没有新增块；资源释放后存活分配计数回到含暂存池的基线。300 个不同绑定组触发第二个描述符池；预热后 12 轮提交的上下文/描述符池 created 计数不再增长，实际 Compute 累加结果正确。另检查相邻映射释放、原始纹理销毁后的视图、异常录制后的新提交、GPU 复制期间立即删除源句柄、完成标记和空闲缓存上限。当前单次采样是对象复用/子分配证据，不宣称新的 FPS 提升。
+
+安装 Debug/Release SDK 后，40 项 Release 聚合示例检查和仅链接 renderer::vulkan 的独立分配测试消费者通过。独立消费者移除 VULKAN_SDK 环境变量后配置和编译成功，未使用 Vulkan/VMA 实现头文件；实现对象合入 Vulkan 库，SDK 仍每配置 27 个静态库。VS 中新实现目标属于 core、新专项属于 tests，VMA 头文件/许可哈希与私有可迁移导出已检查。
+
+最后保留原有每类描述符 4096 条目的类型容量，集合容量为每池 256；改动后重建全部 Debug/Release 目标，并在两个配置分别重跑 allocation/core/advanced/texture/offscreen/window 六项定向检查，全部通过。
+
+## 已安装 SDK 二次开发指南交付（2026-10-26）
+
+指南整理为 24 节，从独立 CMake 接入和完整 main.cpp 开始，覆盖场景/资源/线程、RHI/RenderGraph、十二个扩展、材质/实时纹理、应用调度、运行素材、升级和发布。SDK 文档首页及导航指向 share/renderer/docs/DEVELOPMENT_GUIDE.md；包配置的 renderer_DOCUMENTATION_DIR / renderer_DEVELOPMENT_GUIDE 随安装前缀解析。
+
+直接提取指南第 2.2 节完整 CMake 和第 3.4 节程序，使用全新 Release 安装目录 `build/windows/sdk-delivery/Renderer SDK`（路径含空格），移除 VULKAN_SDK 后分别配置和编译 OpenGL/Vulkan。两个后端均运行隐藏窗口/离屏各 4 帧并保存 960×640 PNG，已查看两个后端的实际棋盘地面/立方体画面；本机同后端窗口/离屏 PNG 字节相同，不要求跨后端逐字节相等。
+
+同一安装包中的聚合 examples 在另一个构建目录独立配置/编译成功，全部 40 项 Release 检查通过，过程中不访问引擎私有头文件或下载第三方开发库。SDK 包配置、示例字体、RML/RCSS 及相对文档导航均使用安装目录内容。本轮应用代码只存在于文档和验证临时目录，未增加引擎示例/测试目标数；完整源码仍为 94 项检查、23 个示例目标。

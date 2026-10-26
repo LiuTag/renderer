@@ -1,4 +1,5 @@
 /** @file @brief Vulkan 1.3 RHI：动态渲染、同步、资源与描述符生命周期以及窗口呈现。 */
+#include "vma.hpp"
 #include "volk.h" // 必须先定义 Vulkan 类型，再包含 GLFW 的内部窗口桥。
 
 #include "../../internal/pool.hpp"
@@ -219,7 +220,7 @@ struct Context {
     VkDebugUtilsMessengerEXT messenger = VK_NULL_HANDLE;
     VkQueue queue = VK_NULL_HANDLE, presentQueue = VK_NULL_HANDLE;
     uint32_t family = 0, presentFamily = 0, timestampBits = 0;
-    VkCommandPool commandPool = VK_NULL_HANDLE;
+    VmaAllocator allocator = VK_NULL_HANDLE;
     VkPipelineCache pipelineCache = VK_NULL_HANDLE;
     VkPhysicalDeviceProperties properties{};
     VkPhysicalDeviceMemoryProperties memory{};
@@ -230,8 +231,8 @@ struct Context {
             f.vkDeviceWaitIdle(device);
             if (pipelineCache)
                 f.vkDestroyPipelineCache(device, pipelineCache, nullptr);
-            if (commandPool)
-                f.vkDestroyCommandPool(device, commandPool, nullptr);
+            if (allocator)
+                vmaDestroyAllocator(allocator);
             f.vkDestroyDevice(device, nullptr);
         }
         if (surface)
@@ -240,13 +241,6 @@ struct Context {
             i.vkDestroyDebugUtilsMessengerEXT(instance, messenger, nullptr);
         if (instance)
             i.vkDestroyInstance(instance, nullptr);
-    }
-    uint32_t memoryType(uint32_t allowed, VkMemoryPropertyFlags required) const {
-        for (uint32_t index = 0; index < memory.memoryTypeCount; ++index)
-            if ((allowed & (1u << index)) &&
-                (memory.memoryTypes[index].propertyFlags & required) == required)
-                return index;
-        throw std::runtime_error("Vulkan has no suitable memory type");
     }
 };
 VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(VkDebugUtilsMessageSeverityFlagBitsEXT severity,
@@ -443,11 +437,41 @@ std::shared_ptr<Context> initialize(GLFWwindow *window, bool debug) {
     c->f.vkGetDeviceQueue(c->device, c->family, 0, &c->queue);
     c->f.vkGetDeviceQueue(c->device, c->presentFamily, 0, &c->presentQueue);
     c->i.vkGetPhysicalDeviceMemoryProperties(c->physical, &c->memory);
-    VkCommandPoolCreateInfo pool{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
-    pool.queueFamilyIndex = c->family;
-    pool.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
-    vkCheck(c->f.vkCreateCommandPool(c->device, &pool, nullptr, &c->commandPool),
-            "Create Vulkan command pool");
+    // 显式传入当前设备的函数表，VMA 不使用全局设备函数或 Vulkan import library。
+    VmaVulkanFunctions functions{};
+    functions.vkGetPhysicalDeviceProperties = c->i.vkGetPhysicalDeviceProperties;
+    functions.vkGetPhysicalDeviceMemoryProperties = c->i.vkGetPhysicalDeviceMemoryProperties;
+    functions.vkAllocateMemory = c->f.vkAllocateMemory;
+    functions.vkFreeMemory = c->f.vkFreeMemory;
+    functions.vkMapMemory = c->f.vkMapMemory;
+    functions.vkUnmapMemory = c->f.vkUnmapMemory;
+    functions.vkFlushMappedMemoryRanges = c->f.vkFlushMappedMemoryRanges;
+    functions.vkInvalidateMappedMemoryRanges = c->f.vkInvalidateMappedMemoryRanges;
+    functions.vkBindBufferMemory = c->f.vkBindBufferMemory;
+    functions.vkBindImageMemory = c->f.vkBindImageMemory;
+    functions.vkGetBufferMemoryRequirements = c->f.vkGetBufferMemoryRequirements;
+    functions.vkGetImageMemoryRequirements = c->f.vkGetImageMemoryRequirements;
+    functions.vkCreateBuffer = c->f.vkCreateBuffer;
+    functions.vkDestroyBuffer = c->f.vkDestroyBuffer;
+    functions.vkCreateImage = c->f.vkCreateImage;
+    functions.vkDestroyImage = c->f.vkDestroyImage;
+    functions.vkCmdCopyBuffer = c->f.vkCmdCopyBuffer;
+    functions.vkGetBufferMemoryRequirements2KHR = c->f.vkGetBufferMemoryRequirements2;
+    functions.vkGetImageMemoryRequirements2KHR = c->f.vkGetImageMemoryRequirements2;
+    functions.vkBindBufferMemory2KHR = c->f.vkBindBufferMemory2;
+    functions.vkBindImageMemory2KHR = c->f.vkBindImageMemory2;
+    functions.vkGetPhysicalDeviceMemoryProperties2KHR = c->i.vkGetPhysicalDeviceMemoryProperties2;
+    functions.vkGetPhysicalDeviceProperties2KHR = c->i.vkGetPhysicalDeviceProperties2;
+    functions.vkGetDeviceBufferMemoryRequirements = c->f.vkGetDeviceBufferMemoryRequirements;
+    functions.vkGetDeviceImageMemoryRequirements = c->f.vkGetDeviceImageMemoryRequirements;
+    VmaAllocatorCreateInfo allocator{};
+    allocator.physicalDevice = c->physical;
+    allocator.device = c->device;
+    allocator.instance = c->instance;
+    allocator.vulkanApiVersion = VK_API_VERSION_1_3;
+    allocator.preferredLargeHeapBlockSize = 32ull * 1024 * 1024;
+    allocator.pVulkanFunctions = &functions;
+    vkCheck(vmaCreateAllocator(&allocator, &c->allocator), "Create Vulkan memory allocator");
     VkPipelineCacheCreateInfo cache{VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO};
     vkCheck(c->f.vkCreatePipelineCache(c->device, &cache, nullptr, &c->pipelineCache),
             "Create Vulkan pipeline cache");
@@ -461,7 +485,7 @@ struct Native {
     VkBuffer buffer = VK_NULL_HANDLE;
     VkImage image = VK_NULL_HANDLE;
     VkImageView view = VK_NULL_HANDLE;
-    VkDeviceMemory memory = VK_NULL_HANDLE;
+    VmaAllocation allocation = VK_NULL_HANDLE;
     void *mapping = nullptr;
     VkSampler sampler = VK_NULL_HANDLE;
     VkPipeline pipeline = VK_NULL_HANDLE;
@@ -488,14 +512,11 @@ struct Native {
             f.vkDestroyQueryPool(device, query, nullptr);
         if (view)
             f.vkDestroyImageView(device, view, nullptr);
-        if (mapping)
-            f.vkUnmapMemory(device, memory);
+        // MAPPED 分配由 VMA 维护映射引用，不能手工 unmap 整个共享内存块。
         if (buffer)
-            f.vkDestroyBuffer(device, buffer, nullptr);
+            vmaDestroyBuffer(c->allocator, buffer, allocation);
         if (image)
-            f.vkDestroyImage(device, image, nullptr);
-        if (memory)
-            f.vkFreeMemory(device, memory, nullptr);
+            vmaDestroyImage(c->allocator, image, allocation);
     }
 };
 struct Buffer {
@@ -525,7 +546,9 @@ struct Submission {
     uint64_t serial = 0;
     VkFence fence = VK_NULL_HANDLE;
     VkCommandBuffer command = VK_NULL_HANDLE;
+    VkCommandPool pool = VK_NULL_HANDLE;
     std::vector<VkDescriptorPool> descriptors;
+    size_t descriptorCursor = 0;
     std::vector<std::shared_ptr<Native>> resources;
     VkSemaphore acquired = VK_NULL_HANDLE;
 };
@@ -555,6 +578,10 @@ struct VulkanDevice final : detail::DeviceBackend {
     renderer::detail::Pool<BindingGroupDesc, GroupTag> groups;
     renderer::detail::Pool<Queries, QueryTag> queries;
     std::deque<Submission> submissions;
+    // 缓存只接收已经完成的上下文；每个命令池只属于一个提交，可整体安全重置。
+    std::vector<Submission> submissionPool;
+    DeviceStatistics deviceStats;
+    static constexpr size_t maxCachedSubmissions = 8, maxCachedDescriptorPools = 4;
     std::vector<std::shared_ptr<Native>> retired;
     std::optional<Texture> presentSource;
     TextureHandle encodedPresent, linearPresent;
@@ -668,6 +695,7 @@ struct VulkanDevice final : detail::DeviceBackend {
         caps.storageAlignment = uint32_t(l.minStorageBufferOffsetAlignment);
         caps.maxComputeInvocations = l.maxComputeWorkGroupInvocations;
         caps.indirectDraw = c->features.drawIndirectFirstInstance == VK_TRUE;
+        submissionPool.reserve(maxCachedSubmissions);
         if (window) {
             window->rendererAttached = true;
             attached = true;
@@ -684,6 +712,9 @@ struct VulkanDevice final : detail::DeviceBackend {
                 release(submissions.front());
                 submissions.pop_front();
             }
+            for (auto &s : submissionPool)
+                release(s);
+            submissionPool.clear();
             retired.clear();
             presentSource.reset();
             destroySwapchain();
@@ -701,6 +732,24 @@ struct VulkanDevice final : detail::DeviceBackend {
         checkThread();
         return caps;
     }
+    DeviceStatistics statistics() const override {
+        checkThread();
+        auto result = deviceStats;
+        result.available = true;
+        result.pendingSubmissions = submissions.size();
+        result.cachedSubmissionContexts = submissionPool.size();
+        for (const auto &s : submissionPool)
+            result.cachedDescriptorPools += s.descriptors.size();
+        std::array<VmaBudget, VK_MAX_MEMORY_HEAPS> heaps{};
+        vmaGetHeapBudgets(c->allocator, heaps.data());
+        for (uint32_t i = 0; i < c->memory.memoryHeapCount; ++i) {
+            result.memoryBlocks += heaps[i].statistics.blockCount;
+            result.memoryAllocations += heaps[i].statistics.allocationCount;
+            result.memoryBlockBytes += heaps[i].statistics.blockBytes;
+            result.memoryAllocationBytes += heaps[i].statistics.allocationBytes;
+        }
+        return result;
+    }
     FormatFeatures formatFeatures(Format format) const override {
         checkThread();
         if (detail::compressed(format) && !c->features.textureCompressionBC)
@@ -716,13 +765,33 @@ struct VulkanDevice final : detail::DeviceBackend {
     void release(Submission &s) {
         for (auto pool : s.descriptors)
             c->f.vkDestroyDescriptorPool(c->device, pool, nullptr);
-        if (s.command)
-            c->f.vkFreeCommandBuffers(c->device, c->commandPool, 1, &s.command);
+        if (s.pool)
+            c->f.vkDestroyCommandPool(c->device, s.pool, nullptr);
         if (s.fence)
             c->f.vkDestroyFence(c->device, s.fence, nullptr);
         if (s.acquired)
             c->f.vkDestroySemaphore(c->device, s.acquired, nullptr);
+        s = {};
+    }
+    void recycle(Submission &s) {
+        // 调用者已确认 Fence 完成；先放开资产引用，空闲缓存不延长资源存活期。
         s.resources.clear();
+        if (s.acquired) {
+            c->f.vkDestroySemaphore(c->device, s.acquired, nullptr);
+            s.acquired = VK_NULL_HANDLE;
+        }
+        if (submissionPool.size() >= maxCachedSubmissions) {
+            release(s);
+            return;
+        }
+        while (s.descriptors.size() > maxCachedDescriptorPools) {
+            c->f.vkDestroyDescriptorPool(c->device, s.descriptors.back(), nullptr);
+            s.descriptors.pop_back();
+        }
+        s.serial = 0;
+        s.descriptorCursor = 0;
+        submissionPool.push_back(std::move(s)); // 构造设备时已预留固定容量。
+        s = {};
     }
     void collect() {
         while (!submissions.empty()) {
@@ -731,23 +800,44 @@ struct VulkanDevice final : detail::DeviceBackend {
                 break;
             vkCheck(status, "Query Vulkan fence");
             completed = submissions.front().serial;
-            release(submissions.front());
+            recycle(submissions.front());
             submissions.pop_front();
         }
         std::erase_if(retired, [&](const auto &native) { return native->lastUse <= completed; });
     }
     Submission begin() {
+        collect();
         Submission s;
         s.serial = submitted + 1;
-        VkCommandBufferAllocateInfo a{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
-        a.commandPool = c->commandPool;
-        a.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-        a.commandBufferCount = 1;
-        vkCheck(c->f.vkAllocateCommandBuffers(c->device, &a, &s.command),
-                "Allocate Vulkan command buffer");
-        VkCommandBufferBeginInfo b{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
-        b.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
         try {
+            if (!submissionPool.empty()) {
+                s = std::move(submissionPool.back());
+                submissionPool.pop_back();
+                s.serial = submitted + 1;
+                vkCheck(c->f.vkResetCommandPool(c->device, s.pool, 0), "Reset Vulkan command pool");
+                vkCheck(c->f.vkResetFences(c->device, 1, &s.fence), "Reset Vulkan fence");
+                for (auto pool : s.descriptors)
+                    vkCheck(c->f.vkResetDescriptorPool(c->device, pool, 0),
+                            "Reset Vulkan descriptor pool");
+                ++deviceStats.submissionContextsReused;
+            } else {
+                VkCommandPoolCreateInfo pool{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
+                pool.queueFamilyIndex = c->family;
+                vkCheck(c->f.vkCreateCommandPool(c->device, &pool, nullptr, &s.pool),
+                        "Create submission command pool");
+                VkCommandBufferAllocateInfo a{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
+                a.commandPool = s.pool;
+                a.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+                a.commandBufferCount = 1;
+                vkCheck(c->f.vkAllocateCommandBuffers(c->device, &a, &s.command),
+                        "Allocate Vulkan command buffer");
+                VkFenceCreateInfo fence{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
+                vkCheck(c->f.vkCreateFence(c->device, &fence, nullptr, &s.fence),
+                        "Create Vulkan fence");
+                ++deviceStats.submissionContextsCreated;
+            }
+            VkCommandBufferBeginInfo b{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+            b.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
             vkCheck(c->f.vkBeginCommandBuffer(s.command, &b), "Begin Vulkan command buffer");
         } catch (...) {
             release(s);
@@ -764,9 +854,6 @@ struct VulkanDevice final : detail::DeviceBackend {
                           VkSemaphore signal = VK_NULL_HANDLE) {
         try {
             vkCheck(c->f.vkEndCommandBuffer(s.command), "End Vulkan command buffer");
-            VkFenceCreateInfo fence{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
-            vkCheck(c->f.vkCreateFence(c->device, &fence, nullptr, &s.fence),
-                    "Create Vulkan fence");
             VkPipelineStageFlags waitStage = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
             VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};
             submit.commandBufferCount = 1;
@@ -828,21 +915,18 @@ struct VulkanDevice final : detail::DeviceBackend {
                        VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT |
                        VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
                        VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT;
-        vkCheck(c->f.vkCreateBuffer(c->device, &buffer, nullptr, &native->buffer),
-                "Create Vulkan buffer");
-        VkMemoryRequirements requirements;
-        c->f.vkGetBufferMemoryRequirements(c->device, native->buffer, &requirements);
-        VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
-        allocation.allocationSize = requirements.size;
-        allocation.memoryTypeIndex = c->memoryType(requirements.memoryTypeBits, properties);
-        vkCheck(c->f.vkAllocateMemory(c->device, &allocation, nullptr, &native->memory),
-                "Allocate Vulkan buffer memory");
-        vkCheck(c->f.vkBindBufferMemory(c->device, native->buffer, native->memory, 0),
-                "Bind Vulkan buffer memory");
+        VmaAllocationCreateInfo allocation{};
+        allocation.requiredFlags = properties;
         if (properties & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT)
-            vkCheck(
-                c->f.vkMapMemory(c->device, native->memory, 0, VK_WHOLE_SIZE, 0, &native->mapping),
-                "Map Vulkan memory");
+            allocation.flags = VMA_ALLOCATION_CREATE_MAPPED_BIT;
+        VmaAllocationInfo info{};
+        VkBuffer result = VK_NULL_HANDLE;
+        VmaAllocation memory = VK_NULL_HANDLE;
+        vkCheck(vmaCreateBuffer(c->allocator, &buffer, &allocation, &result, &memory, &info),
+                "Allocate Vulkan buffer through VMA");
+        native->buffer = result;
+        native->allocation = memory;
+        native->mapping = info.pMappedData; // 指向本子分配的起点，不能再次叠加块内偏移。
         return native;
     }
     BufferHandle createBuffer(const BufferDesc &description,
@@ -915,18 +999,16 @@ struct VulkanDevice final : detail::DeviceBackend {
             info.usage |= VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
         if (features.storageImage)
             info.usage |= VK_IMAGE_USAGE_STORAGE_BIT;
-        vkCheck(c->f.vkCreateImage(c->device, &info, nullptr, &storage->image),
-                "Create Vulkan image");
-        VkMemoryRequirements requirements;
-        c->f.vkGetImageMemoryRequirements(c->device, storage->image, &requirements);
-        VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
-        allocation.allocationSize = requirements.size;
-        allocation.memoryTypeIndex =
-            c->memoryType(requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-        vkCheck(c->f.vkAllocateMemory(c->device, &allocation, nullptr, &storage->memory),
-                "Allocate Vulkan image memory");
-        vkCheck(c->f.vkBindImageMemory(c->device, storage->image, storage->memory, 0),
-                "Bind Vulkan image memory");
+        VmaAllocationCreateInfo allocation{};
+        allocation.requiredFlags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
+        VkImage image = VK_NULL_HANDLE;
+        VmaAllocation memory = VK_NULL_HANDLE;
+        vkCheck(vmaCreateImage(c->allocator, &info, &allocation, &image, &memory, nullptr),
+                "Allocate Vulkan image through VMA");
+        storage->image = image;
+        storage->allocation = memory;
+        if (!description.name.empty())
+            vmaSetAllocationName(c->allocator, memory, description.name.c_str());
         // RHI 图片统一使用 GENERAL，避免视图与缓存绑定组隐藏的布局状态；范围屏障负责可见性。
         recordUpload([&](Submission &s) {
             use(s, storage);
@@ -1746,19 +1828,32 @@ CompletionToken VulkanDevice::submit(const std::vector<detail::Command> &command
     std::optional<Texture> nextPresent;
     std::vector<std::pair<Queries *, uint32_t>> written;
     std::map<std::vector<uint64_t>, std::vector<VkDescriptorSet>> descriptorCache;
-    auto createDescriptorPool = [&] {
+    VkDescriptorPool activeDescriptorPool = VK_NULL_HANDLE;
+    auto nextDescriptorPool = [&] {
+        if (submission.descriptorCursor < submission.descriptors.size()) {
+            ++deviceStats.descriptorPoolsReused;
+            return submission.descriptors[submission.descriptorCursor++];
+        }
         VkDescriptorPoolSize sizes[] = {{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 4096},
                                         {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 4096},
                                         {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 4096},
                                         {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 4096}};
         VkDescriptorPoolCreateInfo info{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
-        info.maxSets = 1024;
+        info.maxSets = 256;
         info.poolSizeCount = 4;
         info.pPoolSizes = sizes;
         VkDescriptorPool pool;
         vkCheck(c->f.vkCreateDescriptorPool(c->device, &info, nullptr, &pool),
                 "Create Vulkan descriptor pool");
-        submission.descriptors.push_back(pool);
+        try {
+            submission.descriptors.push_back(pool);
+        } catch (...) {
+            c->f.vkDestroyDescriptorPool(c->device, pool, nullptr);
+            throw;
+        }
+        ++submission.descriptorCursor;
+        ++deviceStats.descriptorPoolsCreated;
+        return pool;
     };
     auto descriptors = [&] {
         const auto &p = *pipeline;
@@ -1790,16 +1885,16 @@ CompletionToken VulkanDevice::submit(const std::vector<detail::Command> &command
             return;
         }
         std::vector<VkDescriptorSet> sets(p.native->sets.size());
-        if (submission.descriptors.empty())
-            createDescriptorPool();
+        if (!activeDescriptorPool)
+            activeDescriptorPool = nextDescriptorPool();
         VkDescriptorSetAllocateInfo allocation{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
         allocation.descriptorSetCount = uint32_t(sets.size());
         allocation.pSetLayouts = p.native->sets.data();
-        allocation.descriptorPool = submission.descriptors.back();
+        allocation.descriptorPool = activeDescriptorPool;
         auto status = c->f.vkAllocateDescriptorSets(c->device, &allocation, sets.data());
         if (status == VK_ERROR_OUT_OF_POOL_MEMORY || status == VK_ERROR_FRAGMENTED_POOL) {
-            createDescriptorPool();
-            allocation.descriptorPool = submission.descriptors.back();
+            activeDescriptorPool = nextDescriptorPool();
+            allocation.descriptorPool = activeDescriptorPool;
             status = c->f.vkAllocateDescriptorSets(c->device, &allocation, sets.data());
         }
         vkCheck(status, "Allocate Vulkan descriptor sets");

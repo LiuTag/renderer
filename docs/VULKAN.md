@@ -1,6 +1,6 @@
 # Vulkan 后端
 
-[文档导航](README.md) · [模块与依赖](MODULES.md) · [SDK 安装](SDK.md) · [验证记录](VALIDATION.md)
+[文档导航](README.md) · [模块与依赖](MODULES.md) · [SDK 安装](SDK.md) · [验证记录](VALIDATION.md) · [OpenGL 到 Vulkan 源码导读](RENDERING_WALKTHROUGH.md)
 
 `renderer::vulkan` 实现 Vulkan 1.3 RHI、窗口表面与交换链，使用现有 Scene、AssetStore、RenderSnapshot、ShaderArtifact、CommandEncoder 和 RenderGraph。OpenGL/Vulkan 共用 `src/backends/common/renderer_backend.cpp` 的高层管线，PBR、阴影、排序 Alpha、Weighted OIT、FXAA、Sprite/Billboard 和实例化使用同一套前端数据与 Shader。
 
@@ -31,7 +31,7 @@ ctest --preset windows-vulkan
 
 该预设关闭 OpenGL、开启 Vulkan、示例与 Vulkan 检查。`RENDERER_VULKAN_TESTS=ON` 需要 Vulkan 后端已开启，且受 `RENDERER_BUILD_TESTS` 总开关控制；关闭测试时不会编译或注册 GPU 测试。Vulkan 示例检查也受 Vulkan 测试开关控制。
 
-全部后端、模块、示例和测试都开启时，当前有 30 项 CTest，其中九项带 vulkan 标签，包括跨后端对比、两个演示示例及精灵性能测试。可在原 windows 构建中开启并执行：
+完整双后端、十二个模块、示例及 GPU 检查配置当前有 94 项 CTest，包含 Vulkan 资源/计算/绘制/窗口、跨后端像素对比和示例检查；实际清单随开关变化，以 `ctest -N` 为准。可在原 windows 构建中开启并执行：
 
 ```powershell
 cmake --preset windows -DRENDERER_BUILD_VULKAN=ON -DRENDERER_GL_TESTS=ON -DRENDERER_VULKAN_TESTS=ON
@@ -89,9 +89,10 @@ OpenGL 工厂与 Vulkan 窗口混用、或反过来混用会抛出异常。`Devi
 
 - 设备要求 Vulkan 1.3 的 dynamicRendering、synchronization2、独立附件混合，以及支持图形/计算的队列和 GPU 时间戳；呈现队列可以不同，交换链使用对应共享模式。
 - 图形/计算管线直接使用统一 ShaderArtifact 的 SPIR-V。逻辑 set/binding 成为描述符组；各阶段声明合并为 PipelineLayout，自动检查类型和缓冲区大小。
-- 每次提交拥有命令缓冲、fence、描述符分配池及引用的原生资源。句柄销毁立即失效，GPU 使用的对象由提交记录保留到 fence 完成；纹理视图保留底层存储。
-- 上传内存使用持久映射的 host-coherent 分配，专用 GPU 缓冲和纹理通过 staging 上传；同步回读等待对应提交完成。初次资源准备可能等待传输完成，稳态帧提交保持异步。
-- RHI 纹理目前统一使用 GENERAL 布局，显式范围屏障映射到 synchronization2；渲染作用域边界还建立保守的可见性依赖。此实现优先保证纹理视图、资源复用和绑定缓存的一致性，尚未进行按用途最优布局、内存子分配及传输队列并行优化。
+- 提交使用独立命令池/主命令缓冲、fence 和描述符池。Fence 完成后释放资产引用并缓存最多 8 个上下文、每上下文最多 4 个描述符池；复用前整体重置，不重置仍在 GPU 使用中的对象。描述符集仍按本次提交写入/缓存，不跨帧悬挂资源引用。句柄销毁立即失效，原生资源保留至实际使用完成。
+- Buffer/Image 由私有 VMA 3.4.0 分配；较小资源共享设备内存块，持久映射由分配器维护，大资源/驱动要求仍可专用分配。优选大堆块大小为 32 MiB，并非总显存上限。分配器使用当前设备的显式函数表，随原生资源最后引用释放；SDK 无需额外 VMA 库或头文件。
+- 上传内存使用持久映射的 host-coherent 分配，专用 GPU 缓冲和纹理通过 staging 上传。高层默认合并同帧传输批次并复用有界暂存池，批次结束提交后通常不立即等待；上传与绘制使用同一通用队列并建立内存依赖。无批次的即时上传、部分首次资源准备、帧槽复用及同步回读仍可能等待。这里没有独立 Transfer Queue 并行调度，详见[上传优化](OPTIMIZATION.md)与[调用链导读](RENDERING_WALKTHROUGH.md)。
+- RHI 纹理目前统一使用 GENERAL 布局，显式范围屏障映射到 synchronization2；渲染作用域边界还建立保守的可见性依赖。此实现优先保证纹理视图、资源复用和绑定缓存的一致性，尚未进行按用途最优布局及传输队列并行优化。
 - 描述符在提交期间缓存，按实际 PipelineLayout 分配和写入；缓存记录不跨提交悬挂引用。
 - 时间戳转换为纳秒，与 OpenGL 接口一致；统计读取已经完成的旧帧，回读/等待依然是同步操作。
 

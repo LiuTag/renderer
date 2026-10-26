@@ -33,6 +33,10 @@ cmake --build --preset windows-release --parallel 6
 | `renderer_physics2d_demo` | `physics2d/main.cpp` | physics2d，无窗口物理演示 |
 | `renderer_world_demo` | `world/main.cpp` | tilemap、particles、environment、presentation、physics2d 或 collision，以及一个后端 |
 | `renderer_game_demo` | `game/main.cpp`、`application.cpp`、`audio_system.cpp` | 十二个可选模块及一个后端，完整森林营地音画联动应用 |
+| `renderer_features_demo` | `features/main.cpp` | ui、text 与一个后端，异步资源、诊断、材质与实时小地图 |
+| `renderer_texture_pack` | `texture_text/pack.cpp` | core，CPU 图片/DDS 编码与 mip 打包 |
+| `renderer_texture_text_demo` | `texture_text/main.cpp` | text 与一个后端，压缩/数组和位图/SDF 对照 |
+| `renderer_performance` | `performance/main.cpp` | text、interaction 与一个后端，六负载性能矩阵 |
 
 依赖模块未构建时，跳过对应示例。两个后端及全部十二个扩展开启时有 23 个示例目标。关闭 OpenGL 仍可编译 CPU 使用者、音频/物理示例及启用的 Vulkan 示例。`renderer_sprite_demo` 和 `development_sprite` 复用同一份源码，保留原有可执行程序名称。
 
@@ -44,7 +48,7 @@ cmake --build --preset windows-release --parallel 6
 
 ## 安装后作为独立工程
 
-SDK 安装本目录及测试注册脚本；`examples/` 整体或 development、sdk_consumer、modules_consumer、audio、sprite_benchmark、world、physics2d、offscreen、game 子目录都可单独配置。独立配置时通过 find_package 使用 SDK，例如：
+SDK 安装本目录及测试注册脚本；`examples/` 整体或 development、sdk_consumer、modules_consumer、audio、camera、sprite_benchmark、world、physics2d、offscreen、ui、text、features、texture_text、performance、game 子目录都可单独配置。独立配置时通过 find_package 使用 SDK，例如：
 
 ```powershell
 cmake -S C:/SDK/renderer/share/renderer/examples -B build/sdk-examples -DCMAKE_PREFIX_PATH=C:/SDK/renderer -DRENDERER_GL_TESTS=ON

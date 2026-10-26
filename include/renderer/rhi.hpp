@@ -282,6 +282,19 @@ struct UploadStatistics {
     uint64_t calls = 0, bytes = 0, submissions = 0, waits = 0;
     uint64_t stagingAllocations = 0, stagingReuses = 0, pooledStagingBytes = 0;
 };
+/** @brief 提交对象缓存和分配器统计；未实现此诊断的后端返回 available=false 与零值。
+ * 原生内存统计包含资源对齐及空闲块，不等同于资源像素载荷或驱动实际驻留显存。
+ */
+struct DeviceStatistics {
+    bool available = false;
+    uint64_t submissionContextsCreated = 0, submissionContextsReused = 0;
+    uint64_t cachedSubmissionContexts = 0, pendingSubmissions = 0;
+    uint64_t descriptorPoolsCreated = 0, descriptorPoolsReused = 0;
+    uint64_t cachedDescriptorPools = 0; ///< 仅已完成、可复用上下文持有的描述符池数量。
+    uint64_t memoryBlocks = 0, memoryAllocations = 0;
+    uint64_t memoryBlockBytes = 0;      ///< 分配器向 Vulkan 申请的块字节，包含空闲范围。
+    uint64_t memoryAllocationBytes = 0; ///< 当前存活资源的分配字节，包含资源对齐。
+};
 /**
  * @brief 实际后端标识、资源限制、对齐要求及可用功能。
  */
@@ -562,6 +575,10 @@ class Device {
     CompletionToken endUploadBatch();
     /** @brief 查询设备累计上传与暂存池统计。@return 独立统计副本，须在设备线程调用。 */
     UploadStatistics uploadStatistics() const;
+    /** @brief 查询提交复用与原生内存分配统计，不隐式等待 GPU。
+     * @return 统计副本；available=false 表示后端不提供此诊断。须在设备线程调用。
+     */
+    DeviceStatistics statistics() const;
     /** @brief 更新未压缩纹理的局部像素，可与当前传输批次合并。
      * @param texture RGBA8/R8 纹理或视图。@param region 当前 mip 的像素矩形。
      * @param pixels 紧密区域载荷，调用期间复制。@param mipLevel 相对 mip。@param layer 相对数组层。

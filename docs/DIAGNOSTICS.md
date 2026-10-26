@@ -48,3 +48,11 @@ ui.setDebugPanel 创建可反复更新的只读 RML 面板，展示 CPU/GPU 耗�
 压缩纹理的 textureBytes 按实际格式、mip 与数组层计算；compressedTextureBytes 是其 BC 子集，textureArrayLayers 是缓存数组对象的总层数。设备不支持或强制降级时统计 RGBA8 实际上传/存储字节，不能把 DDS 文件大小直接当显存。字形缓存的命中/未命中、淘汰字形/页面可通过 TextStats 查询；统计口径与旧快照保留见[文字文档](TEXT.md)。
 
 RenderStats 新增 uploadCalls/uploadSubmissions/uploadWaits/stagingAllocations/stagingReuses，记录本帧资源传输；普通绘制提交、帧槽等待和主动回读不计入。RendererMemoryStats::pooledUploadBytes 是受管理暂存池载荷，并计入 estimatedGpuBytes，可能位于系统或设备可见内存，不包含独立/待回收暂存峰值。Device::uploadStatistics 可读累计统计。详见[优化文档](OPTIMIZATION.md)。
+
+## Vulkan 提交缓存与分配器
+
+`rhi::Device::statistics()` 返回不含原生类型的 DeviceStatistics，字段及缓存上限见[优化说明](OPTIMIZATION.md)。它不等待 GPU；pendingSubmissions 表示尚未回收的提交记录，created/reused 是设备生命周期累计值。当前 OpenGL 的 available=false，零值表示该诊断不可用。
+
+高层 `Renderer::memoryStatistics()` 提供 nativeMemoryDetailsAvailable、nativeMemoryBlocks/Allocations 和 nativeMemoryBlockBytes/AllocationBytes。它们分别是 VMA 管理的存储块数量/存活分配数、总块字节/存活分配字节，包含仍被在途工作保留的资源和分配对齐。空闲块、暂存保留也计入块字节，因此释放资源后块字节不保证归零。它不是完整驱动驻留显存，不与 estimatedGpuBytes 相加，避免重复计算。
+
+VMA 实现编入 Vulkan 库，查询无需使用者安装 VMA 或链接其他库；升级 SDK 后需使用同套头文件与库重新编译应用。

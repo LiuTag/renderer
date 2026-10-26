@@ -19,6 +19,10 @@ UploadStatistics Device::uploadStatistics() const {
     (void)impl_->backend->capabilities();
     return impl_->backend->uploadStats;
 }
+DeviceStatistics Device::statistics() const {
+    (void)impl_->backend->capabilities();
+    return impl_->backend->statistics();
+}
 Device::Device(std::unique_ptr<Impl> impl) : impl_(std::move(impl)) {}
 Device::~Device() = default;
 Device::Device(Device &&) noexcept = default;

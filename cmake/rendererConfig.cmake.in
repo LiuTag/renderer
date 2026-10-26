@@ -3,6 +3,8 @@
 include(CMakeFindDependencyMacro)
 find_dependency(Threads)
 include("${CMAKE_CURRENT_LIST_DIR}/rendererTargets.cmake")
+set(renderer_DOCUMENTATION_DIR "@PACKAGE_CMAKE_INSTALL_DATADIR@/renderer/docs")
+set(renderer_DEVELOPMENT_GUIDE "${renderer_DOCUMENTATION_DIR}/DEVELOPMENT_GUIDE.md")
 set(renderer_EXAMPLE_TEST_HELPER "@PACKAGE_CMAKE_INSTALL_DATADIR@/renderer/tests/example_tests.cmake")
 
 set(renderer_core_FOUND TRUE)

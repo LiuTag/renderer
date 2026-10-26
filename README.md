@@ -4,9 +4,11 @@ C++20 实时三维渲染引擎，支持 OpenGL 4.5 Core 与可选 Vulkan 1.3 后
 
 支持 [BC 压缩纹理与 DDS、纹理数组](docs/TEXTURES.md)，精灵可以逐实例选择数组层并合批；[世界文字](docs/TEXT.md)增加可选 SDF、缩放抗锯齿、描边及自动 LRU 缓存。[texture_text 示例](examples/texture_text/README.md)提供对照画面和 CPU DDS 打包工具，两种后端共用接口。
 
-[性能优化](docs/OPTIMIZATION.md)提供批量异步传输与暂存池、场景缓存/BVH/拾取、共享固定精灵几何及 R8 字形局部更新。新的 [performance 示例](examples/performance/README.md)覆盖六类负载及参考模式，记录 P95/P99、GPU、上传和内存指标。
+[性能优化](docs/OPTIMIZATION.md)提供批量异步传输与暂存池、场景缓存/BVH/拾取、共享固定精灵几何及 R8 字形局部更新。新的 [performance 示例](examples/performance/README.md)覆盖六类负载及参考模式，记录 P95/P99、GPU、上传和内存指标。 Vulkan 还提供完成提交上下文复用和 VMA 显存子分配，通过公开统计观察对象创建/复用及存储块占用。
 
 中文文档：[文档导航](docs/README.md) · [快速开始](docs/GETTING_STARTED.md) · [接口说明](docs/API_GUIDE.md) · [架构与扩展](docs/ARCHITECTURE.md) · [验证与排错](docs/VALIDATION.md)。
+
+已有 OpenGL 基础、希望理解 Vulkan 和本项目封装时，可阅读[从 OpenGL 到 Vulkan 的源码导读](docs/RENDERING_WALKTHROUGH.md)：沿一次 Draw 跟踪帧准备、RenderGraph、RHI、两种后端调用和 GPU 同步，并提供可运行的双后端离屏程序。
 
 当前源码与 SDK 包版本为 0.2.0。近期新增能力和工程整理见[版本变更记录](CHANGELOG.md)，完整能力及边界见[实现清单](IMPLEMENTATION.md)。
 
@@ -16,7 +18,7 @@ C++20 实时三维渲染引擎，支持 OpenGL 4.5 Core 与可选 Vulkan 1.3 后
 
 [离屏渲染与 PNG](docs/OFFSCREEN.md)：无需应用窗口即可取得渲染图片。`Renderer::createVulkanOffscreen()` 完全跳过窗口/表面/交换链；Windows OpenGL 使用 WGL pbuffer。统一通过 `renderToImage(snapshot, view).savePng(path)` 保存，示例为 `renderer_offscreen_demo`。
 
-二次开发请从[完整开发手册](docs/DEVELOPMENT_GUIDE.md)开始：包含 SDK 接入、场景/材质/模型、相机与输入、透明和线程、Shader/RHI/RenderGraph、性能排错与源码扩展，并附可以通过已安装 SDK 独立构建的[示例工程](examples/README.md)。
+二次开发请从[SDK 二次开发指南](docs/DEVELOPMENT_GUIDE.md)开始：以已安装 SDK 为起点，提供独立 CMake 工程与可直接编译的双后端窗口/离屏程序，覆盖场景与资源、十二个模块、透明与线程、RHI/RenderGraph、运行素材、交付和排错。安装后指南位于 `share/renderer/docs/DEVELOPMENT_GUIDE.md`，可从 SDK 文档首页打开，并配有可独立构建的[示例工程](examples/README.md)。
 
 制作图片角色与三维地面结合的游戏，参见 [Sprite / Billboard 开发说明](docs/SPRITES.md)：支持图集、脚底锚点、方向序列帧、排序组及透明区域拾取。运行 `renderer_sprite_demo --threaded` 体验可移动、可选择物体的森林示例。
 
@@ -89,7 +91,7 @@ cmake --build --preset windows-release
 .\build\windows\Release\renderer_demo.exe --threaded
 ```
 
-首次配置会下载经 SHA256 校验的 glslang、SPIRV-Cross，以及启用功能需要的 GLFW 和 Box2D 源码。GLAD/Volk、TinyGLTF/JSON/stb 图片编解码和 miniaudio 源码已包含在项目中。默认 OpenGL 构建不需要 Vulkan SDK；启用 Vulkan 的源码构建需要开发头文件。固定版本、管理方式和离线覆盖见[第三方依赖](THIRD_PARTY.md)。正常构建不需要 Python 或额外 Shader 编译器可执行文件。
+首次配置会下载经 SHA256 校验的 glslang、SPIRV-Cross，以及启用功能需要的 GLFW 和 Box2D 源码。GLAD/Volk/VMA、TinyGLTF/JSON/stb 图片编解码和 miniaudio 源码已包含在项目中。默认 OpenGL 构建不需要 Vulkan SDK；启用 Vulkan 的源码构建需要开发头文件。固定版本、管理方式和离线覆盖见[第三方依赖](THIRD_PARTY.md)。正常构建不需要 Python 或额外 Shader 编译器可执行文件。
 
 同时启用 Vulkan：
 
@@ -262,7 +264,7 @@ cmake --build --preset windows-gpu-tests
 ctest --preset windows-gpu-tests --verbose
 ```
 
-完整双后端配置包含 93 项 CTest 检查，覆盖核心、十二个扩展、窗口和离屏渲染、综合应用及安装后的 SDK 使用方式。窗口测试大多使用隐藏窗口，全屏检查会短暂显示窗口；Vulkan 离屏检查不初始化 GLFW、无需显示服务。复现命令与实机验证范围见[验证说明](docs/VALIDATION.md)。
+完整双后端配置包含 94 项 CTest 检查，覆盖核心、十二个扩展、窗口和离屏渲染、综合应用及安装后的 SDK 使用方式。窗口测试大多使用隐藏窗口，全屏检查会短暂显示窗口；Vulkan 离屏检查不初始化 GLFW、无需显示服务。复现命令与实机验证范围见[验证说明](docs/VALIDATION.md)。
 
 ```powershell
 .\build\windows\Release\renderer_demo.exe --threaded --hidden --frames 30 --capture build/demo.ppm

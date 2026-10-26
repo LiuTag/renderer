@@ -7,12 +7,12 @@
 | 方式 | 依赖 | 考量 |
 | --- | --- | --- |
 | CMake FetchContent | GLFW、glslang、SPIRV-Cross、Box2D、RmlUi、FreeType | 复用完整上游 CMake 工程，减少主仓库源码体积；远程压缩包按固定版本和 SHA256 校验 |
-| 源码随仓库保存 | TinyGLTF/json/stb、miniaudio、Volk、stb_dxt、bcdec | 文件数量少、集成直接，保留上游原文，正常构建无需单独下载这些文件 |
+| 源码随仓库保存 | TinyGLTF/json/stb、miniaudio、Volk、VMA、stb_dxt、bcdec | 文件数量少、集成直接，保留上游原文，正常构建无需单独下载这些文件 |
 | 生成结果随仓库保存 | GLAD | 固定 OpenGL 4.5 加载代码，正常构建无需 Python、生成器或联网再生成 |
 
 FetchContent 默认在构建目录 `_deps` 保存源码和构建结果。离线构建可通过 `FETCHCONTENT_SOURCE_DIR_<依赖名>` 使用预先准备的精确版本源码；此方式直接使用指定目录，不重新下载或自动校验本地内容。`.cache` 是当前工作区可选的本地源码缓存，不纳入 Git。获取方式不同，但版本升级都应人工更新版本/哈希或生成结果，并重新验证构建、测试与 SDK。
 
-安装包提供公共引擎头文件和完整静态链接依赖。glslang、SPIRV-Cross、GLFW、GLAD、Box2D 等单独随包安装，miniaudio、Volk 和模型/图片编解码实现编入对应引擎库；CMake 目标自动传递依赖。第三方实现头文件不进入公共 API，也不要求 SDK 使用者自行安装。系统图形/音频运行时和驱动仍由运行环境提供。
+安装包提供公共引擎头文件和完整静态链接依赖。glslang、SPIRV-Cross、GLFW、GLAD、Box2D 等单独随包安装，miniaudio、Volk、VMA 和模型/图片编解码实现编入对应引擎库；CMake 目标自动传递依赖。第三方实现头文件不进入公共 API，也不要求 SDK 使用者自行安装。系统图形/音频运行时和驱动仍由运行环境提供。
 
 ## RmlUi 6.3、FreeType 2.14.3 与 UI 示例字体
 
@@ -54,6 +54,15 @@ python -m glad --api gl:core=4.5 --extensions '' --out-path third_party/glad --r
 - `LICENSE.md` SHA256：`04a0693a84f19e53d281ca98bbb0c86ca77251ab13769c6168e6684feb9a1436`。
 - MIT 许可原文另存于 `third_party/licenses/volk.txt`。实现对象合入 `renderer_vulkan` 静态库；SDK 不安装 Volk/Vulkan 开发头文件，也不要求应用链接 Vulkan import library。
 - 源码构建通过 `find_package(Vulkan 1.3 REQUIRED)` 取得开发头文件，未将 Vulkan SDK 的绝对路径或库传递到安装包。
+
+## Vulkan Memory Allocator 3.4.0
+
+- [固定源码版本](https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator/tree/v3.4.0)，上游 `include/vk_mem_alloc.h` 原样保存于 `third_party/vma`，MIT 许可原文保存于 `third_party/licenses/VulkanMemoryAllocator.txt`。
+- `vk_mem_alloc.h` SHA256：`8487b7995ad3b263eb73bc5b9a77d71aa69b6bef5d58a715c02d2663afd81f1a`。
+- `LICENSE.txt` SHA256：`52df2c03d6cfc9ffec13c9d3626c530fc9ce0cbe41d5ea3d10cd46edeb1aeb38`。
+- 仅在 Vulkan 开启时编译 `renderer_vma` 对象目标，归入 VS 的 core；实现对象合入 renderer_vulkan，不增加需要分发的独立库。SDK 不安装 VMA/Vulkan 开发头文件，许可随既有规则安装。
+- 关闭 VMA 静态和自动动态 Vulkan 函数导入，显式使用当前 Context 的实例/设备函数表；不链接 Vulkan import library，不使用其他设备的全局 dispatch table。
+- Buffer/Image 使用 VMA 子分配，必要的大资源或驱动要求可使用专用分配。持久映射及释放交给 VMA，图像视图与在途提交继续保留父存储。当前不启用显存整理或外部内存共享，也未将内存预算扩展设为运行要求。
 
 ## glslang 15.4.0
 

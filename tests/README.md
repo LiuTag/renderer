@@ -52,7 +52,7 @@ ctest --preset windows --output-on-failure
 
 `RENDERER_BUILD_TESTS=OFF` 优先于两个 GPU 开关，即使旧缓存中 GPU 测试为 ON，也不会编译或注册任何测试；重新配置会清空旧测试清单。关闭测试不会删除已经生成的可执行文件，它们不再属于当前构建目标。
 
-完整双后端配置包含 25 个 CPU 套件、14 个 OpenGL/窗口套件、13 个 Vulkan 套件及 1 个跨后端对比，共 53 个测试本体。开启全部示例后再注册 40 项示例运行检查，总计 93 项 CTest。仅核心且关闭所有扩展/后端/示例时有 10 项 CPU 检查。可用数量随构建开关变化，以 `ctest -N` 为准。
+完整双后端配置包含 25 个 CPU 套件、14 个 OpenGL/窗口套件、14 个 Vulkan 套件及 1 个跨后端对比，共 54 个测试本体。开启全部示例后再注册 40 项示例运行检查，总计 94 项 CTest。仅核心且关闭所有扩展/后端/示例时有 10 项 CPU 检查。可用数量随构建开关变化，以 `ctest -N` 为准。
 
 `renderer.game.{opengl,vulkan}.{window,offscreen}` 四项检查运行综合应用 240 帧，验证图像、推箱子与事件、方向动画/脚步、流式编辑保存/传送、音频采样和 PNG/WAV 输出。全部使用离线音频与独立缓存，窗口模式采用渲染线程、离屏模式采用当前线程，详见[综合示例](../examples/game/README.md)。
 
@@ -85,3 +85,5 @@ renderer.asset_loader 覆盖 Unicode 后台图片/模型、取消/错误、CPU �
 压缩/数组与文字质量检查：renderer.texture 验证 BC 编解码、DDS/层/mip/Unicode/长度、颜色空间与 Alpha 正确过滤；renderer.{opengl,vulkan}.texture 验证真实层采样、视图/拷贝/Storage Image、合批、强制 RGBA 降级与内存。renderer.text.quality 检查规范字号复用、LRU/保护/严格容量和旧批次；renderer.{opengl,vulkan}.text_quality 检查 SDF 边缘/外描边及回收后的旧帧像素。interaction 与 ui_text.upgrade 包含压缩数组拾取/选层与 UI 字体回收。texture.pack 与 texture_text 的四项示例检查使用公开 SDK 接口。
 
 优化专项：renderer.optimization.cpu 验证缓存身份/失效/清理、跨场景隔离、BVH/扫描及阴影结果一致、移动后重拟合、Alpha8/DDS 与不可变更新；renderer.optimization.opengl/vulkan 检查真实批量传输/无逐项等待、暂存复用、奇数 R8 区域与层、提交前销毁父句柄、图集局部上传及旧快照逐像素保留。两项 performance 示例检查运行双线程和六负载，不设机器相关 FPS 门槛。
+
+`renderer.vulkan.allocation` 无窗口验证 VMA 共享块/映射/图像视图、在途子分配释放，以及命令缓冲/Fence/描述符池的稳态和溢出复用、错误恢复与缓存上限；仅在 Vulkan 测试开启时构建，VS 归入 tests。
